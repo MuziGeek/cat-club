@@ -1,27 +1,28 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../providers/auth_provider.dart';
 import '../../router/app_router.dart';
 import '../../widgets/common/app_button.dart';
 import '../../widgets/common/app_text_field.dart';
 
 /// 注册页面
-class RegisterPage extends StatefulWidget {
+class RegisterPage extends ConsumerStatefulWidget {
   const RegisterPage({super.key});
 
   @override
-  State<RegisterPage> createState() => _RegisterPageState();
+  ConsumerState<RegisterPage> createState() => _RegisterPageState();
 }
 
-class _RegisterPageState extends State<RegisterPage> {
+class _RegisterPageState extends ConsumerState<RegisterPage> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
-  bool _isLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   bool _agreeToTerms = false;
@@ -45,28 +46,49 @@ class _RegisterPageState extends State<RegisterPage> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    final success = await ref.read(registerProvider.notifier).registerWithEmail(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+          displayName: _nameController.text.trim(),
+        );
 
-    try {
-      // TODO: 实现 Firebase 注册逻辑
-      await Future.delayed(const Duration(seconds: 1));
+    if (!mounted) return;
 
-      if (!mounted) return;
+    if (success) {
       context.go(AppRoutes.petCreate);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('注册失败: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
     }
+  }
+
+  String _getErrorMessage(Object error) {
+    final errorStr = error.toString().toLowerCase();
+    if (errorStr.contains('email-already-in-use')) {
+      return '该邮箱已被注册';
+    } else if (errorStr.contains('invalid-email')) {
+      return '邮箱格式错误';
+    } else if (errorStr.contains('weak-password')) {
+      return '密码强度不够';
+    } else if (errorStr.contains('network')) {
+      return '网络连接失败';
+    }
+    return '注册失败，请重试';
   }
 
   @override
   Widget build(BuildContext context) {
+    final registerState = ref.watch(registerProvider);
+    final isLoading = registerState.isLoading;
+
+    // 监听错误并显示提示
+    ref.listen<AsyncValue<void>>(registerProvider, (previous, next) {
+      next.whenOrNull(
+        error: (error, _) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_getErrorMessage(error))),
+          );
+        },
+      );
+    });
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -239,8 +261,8 @@ class _RegisterPageState extends State<RegisterPage> {
                 // 注册按钮
                 AppButton(
                   text: '注册',
-                  onPressed: _handleRegister,
-                  isLoading: _isLoading,
+                  onPressed: isLoading ? null : _handleRegister,
+                  isLoading: isLoading,
                 ),
                 const SizedBox(height: 24),
 

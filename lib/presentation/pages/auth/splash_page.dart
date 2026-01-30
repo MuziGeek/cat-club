@@ -1,19 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../providers/auth_provider.dart';
 import '../../router/app_router.dart';
 
 /// 启动页
-class SplashPage extends StatefulWidget {
+class SplashPage extends ConsumerStatefulWidget {
   const SplashPage({super.key});
 
   @override
-  State<SplashPage> createState() => _SplashPageState();
+  ConsumerState<SplashPage> createState() => _SplashPageState();
 }
 
-class _SplashPageState extends State<SplashPage>
+class _SplashPageState extends ConsumerState<SplashPage>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _fadeAnimation;
@@ -36,18 +38,22 @@ class _SplashPageState extends State<SplashPage>
     );
 
     _controller.forward();
-    _checkAuthAndNavigate();
+    _navigateAfterDelay();
   }
 
-  Future<void> _checkAuthAndNavigate() async {
+  Future<void> _navigateAfterDelay() async {
     // 延迟显示启动动画
     await Future.delayed(const Duration(seconds: 2));
 
     if (!mounted) return;
 
-    // TODO: 检查用户登录状态
-    // 暂时直接跳转到登录页
-    context.go(AppRoutes.login);
+    // 根据认证状态跳转
+    final authStatus = ref.read(authStatusProvider);
+    if (authStatus == AuthStatus.authenticated) {
+      context.go(AppRoutes.petRoom);
+    } else {
+      context.go(AppRoutes.login);
+    }
   }
 
   @override

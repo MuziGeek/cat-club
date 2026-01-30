@@ -1,25 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../providers/auth_provider.dart';
 import '../../router/app_router.dart';
 import '../../widgets/common/app_button.dart';
 import '../../widgets/common/app_text_field.dart';
 
 /// 登录页面
-class LoginPage extends StatefulWidget {
+class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
 
   @override
-  State<LoginPage> createState() => _LoginPageState();
+  ConsumerState<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends State<LoginPage> {
+class _LoginPageState extends ConsumerState<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  bool _isLoading = false;
   bool _obscurePassword = true;
 
   @override
@@ -32,28 +33,60 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _isLoading = true);
+    final success = await ref.read(loginProvider.notifier).signInWithEmail(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+        );
 
-    try {
-      // TODO: 实现 Firebase 登录逻辑
-      await Future.delayed(const Duration(seconds: 1));
+    if (!mounted) return;
 
-      if (!mounted) return;
+    if (success) {
       context.go(AppRoutes.petRoom);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('登录失败: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
     }
+  }
+
+  Future<void> _handleGoogleLogin() async {
+    final success = await ref.read(loginProvider.notifier).signInWithGoogle();
+
+    if (!mounted) return;
+
+    if (success) {
+      context.go(AppRoutes.petRoom);
+    }
+  }
+
+  String _getErrorMessage(Object error) {
+    final errorStr = error.toString().toLowerCase();
+    if (errorStr.contains('user-not-found')) {
+      return '用户不存在';
+    } else if (errorStr.contains('wrong-password')) {
+      return '密码错误';
+    } else if (errorStr.contains('invalid-email')) {
+      return '邮箱格式错误';
+    } else if (errorStr.contains('too-many-requests')) {
+      return '登录尝试次数过多，请稍后再试';
+    } else if (errorStr.contains('network')) {
+      return '网络连接失败';
+    }
+    return '登录失败，请重试';
   }
 
   @override
   Widget build(BuildContext context) {
+    final loginState = ref.watch(loginProvider);
+    final isLoading = loginState.isLoading;
+
+    // 监听错误并显示提示
+    ref.listen<AsyncValue<void>>(loginProvider, (previous, next) {
+      next.whenOrNull(
+        error: (error, _) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_getErrorMessage(error))),
+          );
+        },
+      );
+    });
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -162,8 +195,8 @@ class _LoginPageState extends State<LoginPage> {
                 // 登录按钮
                 AppButton(
                   text: '登录',
-                  onPressed: _handleLogin,
-                  isLoading: _isLoading,
+                  onPressed: isLoading ? null : _handleLogin,
+                  isLoading: isLoading,
                 ),
                 const SizedBox(height: 16),
 
@@ -185,9 +218,7 @@ class _LoginPageState extends State<LoginPage> {
 
                 // 社交登录按钮
                 OutlinedButton.icon(
-                  onPressed: () {
-                    // TODO: Google 登录
-                  },
+                  onPressed: isLoading ? null : _handleGoogleLogin,
                   icon: const Icon(Icons.g_mobiledata),
                   label: const Text('使用 Google 账号登录'),
                   style: OutlinedButton.styleFrom(

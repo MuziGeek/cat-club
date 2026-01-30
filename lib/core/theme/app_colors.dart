@@ -39,6 +39,7 @@ class AppColors {
   static const Color hungerColor = Color(0xFFFF7043);
   static const Color energyColor = Color(0xFF42A5F5);
   static const Color healthColor = Color(0xFF66BB6A);
+  static const Color cleanlinessColor = Color(0xFF81D4FA);
 
   // 边框颜色
   static const Color border = Color(0xFFE0E0E0);

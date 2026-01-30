@@ -35,6 +35,7 @@ class PetStatus with _$PetStatus {
     @Default(100) int hunger,
     @Default(100) int energy,
     @Default(100) int health,
+    @Default(100) int cleanliness,
   }) = _PetStatus;
 
   factory PetStatus.fromJson(Map<String, dynamic> json) =>

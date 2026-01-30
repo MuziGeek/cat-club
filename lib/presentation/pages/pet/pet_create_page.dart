@@ -1,32 +1,33 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../data/models/pet_model.dart';
+import '../../../providers/pet_provider.dart';
 import '../../router/app_router.dart';
 import '../../widgets/common/app_button.dart';
 
 /// 创建宠物页面
-class PetCreatePage extends StatefulWidget {
+class PetCreatePage extends ConsumerStatefulWidget {
   const PetCreatePage({super.key});
 
   @override
-  State<PetCreatePage> createState() => _PetCreatePageState();
+  ConsumerState<PetCreatePage> createState() => _PetCreatePageState();
 }
 
-class _PetCreatePageState extends State<PetCreatePage> {
+class _PetCreatePageState extends ConsumerState<PetCreatePage> {
   final _nameController = TextEditingController();
   PetSpecies _selectedSpecies = PetSpecies.cat;
   int _selectedPresetIndex = 0;
-  bool _isLoading = false;
 
   // 预设宠物形象
   final List<Map<String, dynamic>> _presets = [
-    {'name': '橘猫', 'color': Colors.orange, 'icon': Icons.pets},
-    {'name': '白猫', 'color': Colors.grey.shade200, 'icon': Icons.pets},
-    {'name': '黑猫', 'color': Colors.black87, 'icon': Icons.pets},
-    {'name': '花猫', 'color': Colors.brown, 'icon': Icons.pets},
+    {'name': '橘猫', 'color': Colors.orange, 'furColor': 'orange', 'eyeColor': 'yellow'},
+    {'name': '白猫', 'color': Colors.grey.shade200, 'furColor': 'white', 'eyeColor': 'blue'},
+    {'name': '黑猫', 'color': Colors.black87, 'furColor': 'black', 'eyeColor': 'green'},
+    {'name': '花猫', 'color': Colors.brown, 'furColor': 'brown', 'eyeColor': 'amber'},
   ];
 
   @override
@@ -43,33 +44,52 @@ class _PetCreatePageState extends State<PetCreatePage> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    // 获取选中的预设
+    final preset = _presets[_selectedPresetIndex];
 
-    try {
-      // TODO: 创建宠物并保存到 Firestore
-      await Future.delayed(const Duration(seconds: 1));
+    // 构建 PetAppearance
+    final appearance = PetAppearance(
+      furColor: preset['furColor'] as String,
+      eyeColor: preset['eyeColor'] as String,
+    );
 
-      if (!mounted) return;
+    // 调用 petCreateProvider 创建宠物
+    final petId = await ref.read(petCreateProvider.notifier).createPet(
+      name: _nameController.text.trim(),
+      species: _selectedSpecies,
+      appearance: appearance,
+    );
+
+    if (!mounted) return;
+
+    if (petId != null) {
+      // 设置选中的宠物 ID
+      ref.read(selectedPetIdProvider.notifier).state = petId;
+      // 导航到宠物房间
       context.go(AppRoutes.petRoom);
-    } catch (e) {
-      if (!mounted) return;
+    } else {
+      // 显示错误
+      final error = ref.read(petCreateProvider).error;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('创建失败: $e')),
+        SnackBar(content: Text('创建失败: ${error ?? '未知错误'}')),
       );
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // 监听创建状态
+    final createState = ref.watch(petCreateProvider);
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('创建宠物'),
         backgroundColor: Colors.transparent,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => context.go(AppRoutes.petRoom),
+        ),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
@@ -124,7 +144,7 @@ class _PetCreatePageState extends State<PetCreatePage> {
             AppButton(
               text: '创建宠物',
               onPressed: _handleCreate,
-              isLoading: _isLoading,
+              isLoading: createState.isLoading,
             ),
           ],
         ),
@@ -217,8 +237,8 @@ class _PetCreatePageState extends State<PetCreatePage> {
                       color: preset['color'] as Color,
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(
-                      preset['icon'] as IconData,
+                    child: const Icon(
+                      Icons.pets,
                       color: Colors.white,
                       size: 24,
                     ),
@@ -238,46 +258,54 @@ class _PetCreatePageState extends State<PetCreatePage> {
   }
 
   Widget _buildUploadOption() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
+    return GestureDetector(
+      onTap: () {
+        // TODO: 实现图片选择功能
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('照片上传功能开发中，敬请期待')),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.photo_camera,
+                color: AppColors.primary,
+              ),
             ),
-            child: const Icon(
-              Icons.photo_camera,
-              color: AppColors.primary,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('上传宠物照片', style: AppTextStyles.body1),
+                  Text(
+                    'AI 将为你生成专属卡通形象',
+                    style: AppTextStyles.caption,
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('上传宠物照片', style: AppTextStyles.body1),
-                Text(
-                  'AI 将为你生成专属卡通形象',
-                  style: AppTextStyles.caption,
-                ),
-              ],
+            const Icon(
+              Icons.arrow_forward_ios,
+              color: AppColors.textHint,
+              size: 16,
             ),
-          ),
-          const Icon(
-            Icons.arrow_forward_ios,
-            color: AppColors.textHint,
-            size: 16,
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
