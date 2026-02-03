@@ -28,6 +28,7 @@ class InteractivePetWidget extends StatefulWidget {
   final VoidCallback? onPet;           // 抚摸回调
   final VoidCallback? onRest;          // 休息回调
   final VoidCallback? onPlay;          // 玩耍回调
+  final VoidCallback? onAvatarTap;     // 头像点击回调（用于更换照片）
   final void Function(ItemModel)? onItemDropped;  // 道具拖放回调
 
   const InteractivePetWidget({
@@ -36,6 +37,7 @@ class InteractivePetWidget extends StatefulWidget {
     this.onPet,
     this.onRest,
     this.onPlay,
+    this.onAvatarTap,
     this.onItemDropped,
   });
 
@@ -186,6 +188,98 @@ class _InteractivePetWidgetState extends State<InteractivePetWidget>
     }
   }
 
+  /// 构建宠物头像
+  ///
+  /// 优先显示照片，否则显示图标
+  Widget _buildPetAvatar(Color petColor) {
+    final photoUrl = widget.pet.originalPhotoUrl ?? widget.pet.cartoonAvatarUrl;
+    final hasPhoto = photoUrl != null && photoUrl.isNotEmpty;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // 背景照片或图标
+        if (hasPhoto)
+          Image.network(
+            photoUrl,
+            fit: BoxFit.cover,
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return Center(
+                child: CircularProgressIndicator(
+                  value: loadingProgress.expectedTotalBytes != null
+                      ? loadingProgress.cumulativeBytesLoaded /
+                          loadingProgress.expectedTotalBytes!
+                      : null,
+                  strokeWidth: 2,
+                  color: petColor,
+                ),
+              );
+            },
+            errorBuilder: (context, error, stackTrace) {
+              return _buildDefaultAvatar(petColor);
+            },
+          )
+        else
+          _buildDefaultAvatar(petColor),
+
+        // 行为状态覆盖层
+        if (_behavior != PetBehavior.idle)
+          Container(
+            color: Colors.black26,
+            child: Center(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                child: Icon(
+                  _getPetIcon(),
+                  key: ValueKey(_behavior),
+                  size: 60,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+
+        // 长按更换照片提示
+        if (widget.onAvatarTap != null)
+          Positioned(
+            bottom: 8,
+            right: 8,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.camera_alt,
+                size: 16,
+                color: Colors.white70,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// 构建默认头像（图标）
+  Widget _buildDefaultAvatar(Color petColor) {
+    return Container(
+      color: petColor.withOpacity(0.3),
+      child: Center(
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: Icon(
+            _behavior == PetBehavior.idle ? Icons.pets : _getPetIcon(),
+            key: ValueKey(_behavior == PetBehavior.idle ? 'idle' : _behavior),
+            size: 80,
+            color: petColor,
+          ),
+        ),
+      ),
+    );
+  }
+
   /// 获取状态提示文字
   String _getStatusHint() {
     switch (_behavior) {
@@ -309,29 +403,26 @@ class _InteractivePetWidgetState extends State<InteractivePetWidget>
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         // 宠物形象
-                        Container(
-                          width: 180,
-                          height: 180,
-                          decoration: BoxDecoration(
-                            color: petColor.withOpacity(0.3),
-                            shape: BoxShape.circle,
-                            boxShadow: _behavior != PetBehavior.idle
-                                ? [
-                                    BoxShadow(
-                                      color: petColor.withOpacity(0.5),
-                                      blurRadius: 20,
-                                      spreadRadius: 5,
-                                    ),
-                                  ]
-                                : null,
-                          ),
-                          child: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 300),
-                            child: Icon(
-                              _getPetIcon(),
-                              key: ValueKey(_behavior),
-                              size: 80,
-                              color: petColor,
+                        GestureDetector(
+                          onLongPress: widget.onAvatarTap,
+                          child: Container(
+                            width: 180,
+                            height: 180,
+                            decoration: BoxDecoration(
+                              color: petColor.withOpacity(0.3),
+                              shape: BoxShape.circle,
+                              boxShadow: _behavior != PetBehavior.idle
+                                  ? [
+                                      BoxShadow(
+                                        color: petColor.withOpacity(0.5),
+                                        blurRadius: 20,
+                                        spreadRadius: 5,
+                                      ),
+                                    ]
+                                  : null,
+                            ),
+                            child: ClipOval(
+                              child: _buildPetAvatar(petColor),
                             ),
                           ),
                         ),

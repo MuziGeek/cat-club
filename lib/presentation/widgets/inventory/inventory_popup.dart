@@ -20,7 +20,8 @@ class InventoryPopup extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final inventoryAsync = ref.watch(inventoryProvider);
+    // 使用 inventoryNotifierProvider 实现实时更新
+    final inventory = ref.watch(inventoryNotifierProvider);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
@@ -85,26 +86,7 @@ class InventoryPopup extends ConsumerWidget {
           const SizedBox(height: 16),
 
           // 道具列表
-          inventoryAsync.when(
-            data: (inventory) {
-              if (inventory.isEmpty) {
-                return _buildEmptyState();
-              }
-              return _buildItemGrid(inventory);
-            },
-            loading: () => const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: CircularProgressIndicator(),
-              ),
-            ),
-            error: (e, _) => Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: Text('加载失败: $e'),
-              ),
-            ),
-          ),
+          inventory.isEmpty ? _buildEmptyState() : _buildItemGrid(inventory),
         ],
       ),
     );

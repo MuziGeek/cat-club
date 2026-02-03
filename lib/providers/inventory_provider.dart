@@ -1,114 +1,153 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/models/item_definitions.dart';
 import '../data/models/item_model.dart';
+import '../services/firestore_service.dart';
+import 'auth_provider.dart';
+import 'user_provider.dart';
 
 /// 背包状态管理 Provider
 ///
 /// 管理用户拥有的道具及其数量
-/// 后期可接入 Firestore 持久化
+/// 数据从 Firestore 加载，使用 ItemDefinitions 转换
 
-/// 背包道具 Provider
+/// 背包道具 Provider（从 Firestore 加载）
 /// 返回 Map<ItemModel, int>，表示道具及其数量
 final inventoryProvider = FutureProvider<Map<ItemModel, int>>((ref) async {
-  // TODO: 后期从 Firestore 加载用户背包
-  // 目前返回模拟数据用于测试
+  final authState = ref.watch(authStateProvider);
+  final userId = authState.valueOrNull?.uid;
+  if (userId == null) return {};
 
-  // 模拟延迟
-  await Future.delayed(const Duration(milliseconds: 300));
+  final firestoreService = ref.watch(firestoreServiceProvider);
+  final rawInventory = await firestoreService.getUserInventory(userId);
 
-  return _mockInventory;
+  // 如果背包为空，初始化默认背包
+  if (rawInventory.isEmpty) {
+    await firestoreService.setInitialInventory(
+      userId,
+      ItemDefinitions.initialInventory,
+    );
+    return _convertToItemModelMap(ItemDefinitions.initialInventory);
+  }
+
+  return _convertToItemModelMap(rawInventory);
 });
 
-/// 模拟背包数据
-final Map<ItemModel, int> _mockInventory = {
-  // 食物类
-  const ItemModel(
-    id: 'food_fish',
-    name: '小鱼干',
-    description: '猫咪最爱的零食，恢复饱腹度',
-    category: ItemCategory.food,
-    rarity: ItemRarity.common,
-    imageUrl: '',
-    price: 10,
-    currency: CurrencyType.coins,
-    effects: {'hunger': 20, 'happiness': 5},
-  ): 5,
-
-  const ItemModel(
-    id: 'food_premium_fish',
-    name: '高级鱼罐头',
-    description: '进口优质鱼肉，大幅恢复饱腹度',
-    category: ItemCategory.food,
-    rarity: ItemRarity.rare,
-    imageUrl: '',
-    price: 50,
-    currency: CurrencyType.coins,
-    effects: {'hunger': 40, 'happiness': 15},
-  ): 2,
-
-  const ItemModel(
-    id: 'food_treat',
-    name: '美味肉条',
-    description: '香喷喷的肉条零食',
-    category: ItemCategory.food,
-    rarity: ItemRarity.common,
-    imageUrl: '',
-    price: 15,
-    currency: CurrencyType.coins,
-    effects: {'hunger': 15, 'happiness': 10},
-  ): 3,
-
-  // 清洁道具
-  const ItemModel(
-    id: 'clean_towel',
-    name: '柔软毛巾',
-    description: '温柔擦拭，恢复清洁度',
-    category: ItemCategory.special,
-    rarity: ItemRarity.common,
-    imageUrl: '',
-    price: 20,
-    currency: CurrencyType.coins,
-    effects: {'cleanliness': 25, 'happiness': 10},
-  ): 3,
-
-  const ItemModel(
-    id: 'clean_brush',
-    name: '美容刷',
-    description: '专业美容刷，让毛发更顺滑',
-    category: ItemCategory.special,
-    rarity: ItemRarity.rare,
-    imageUrl: '',
-    price: 80,
-    currency: CurrencyType.coins,
-    effects: {'cleanliness': 40, 'happiness': 20, 'health': 5},
-  ): 1,
-};
+/// 将 itemId -> quantity 转换为 ItemModel -> quantity
+Map<ItemModel, int> _convertToItemModelMap(Map<String, int> rawInventory) {
+  final inventory = <ItemModel, int>{};
+  for (final entry in rawInventory.entries) {
+    final item = ItemDefinitions.getItem(entry.key);
+    if (item != null && entry.value > 0) {
+      inventory[item] = entry.value;
+    }
+  }
+  return inventory;
+}
 
 /// 背包操作 Notifier
 class InventoryNotifier extends StateNotifier<Map<ItemModel, int>> {
-  InventoryNotifier() : super({..._mockInventory});
+  final FirestoreService _firestoreService;
+  final Ref _ref;
+
+  InventoryNotifier(this._firestoreService, this._ref) : super({}) {
+    _loadInventory();
+  }
+
+  /// 加载背包数据
+  Future<void> _loadInventory() async {
+    try {
+      final authState = _ref.read(authStateProvider);
+      final userId = authState.valueOrNull?.uid;
+      if (userId == null) return;
+
+      final rawInventory = await _firestoreService.getUserInventory(userId);
+
+      // 如果背包为空，初始化默认背包
+      if (rawInventory.isEmpty) {
+        await _firestoreService.setInitialInventory(
+          userId,
+          ItemDefinitions.initialInventory,
+        );
+        state = _convertToItemModelMap(ItemDefinitions.initialInventory);
+        return;
+      }
+
+      state = _convertToItemModelMap(rawInventory);
+    } catch (e) {
+      debugPrint('加载背包失败: $e');
+    }
+  }
+
+  /// 刷新背包数据
+  Future<void> refresh() async {
+    await _loadInventory();
+  }
 
   /// 使用道具
+  /// 返回 true 表示使用成功
   bool useItem(ItemModel item) {
     final currentQty = state[item] ?? 0;
     if (currentQty <= 0) return false;
 
+    // 先更新本地状态（乐观更新）
     final newState = Map<ItemModel, int>.from(state);
     if (currentQty == 1) {
       newState.remove(item);
     } else {
       newState[item] = currentQty - 1;
     }
-
     state = newState;
+
+    // 异步同步到 Firestore
+    _syncUseItem(item);
+
     return true;
+  }
+
+  /// 同步使用道具到 Firestore
+  Future<void> _syncUseItem(ItemModel item) async {
+    try {
+      final authState = _ref.read(authStateProvider);
+      final userId = authState.valueOrNull?.uid;
+      if (userId == null) return;
+
+      final success = await _firestoreService.useInventoryItem(userId, item.id);
+      if (!success) {
+        // 如果 Firestore 操作失败，重新加载背包
+        await _loadInventory();
+      }
+    } catch (e) {
+      debugPrint('同步使用道具失败: $e');
+      // 失败时重新加载
+      await _loadInventory();
+    }
   }
 
   /// 添加道具
   void addItem(ItemModel item, {int quantity = 1}) {
+    // 先更新本地状态
     final newState = Map<ItemModel, int>.from(state);
     newState[item] = (newState[item] ?? 0) + quantity;
     state = newState;
+
+    // 异步同步到 Firestore
+    _syncAddItem(item, quantity);
+  }
+
+  /// 同步添加道具到 Firestore
+  Future<void> _syncAddItem(ItemModel item, int quantity) async {
+    try {
+      final authState = _ref.read(authStateProvider);
+      final userId = authState.valueOrNull?.uid;
+      if (userId == null) return;
+
+      await _firestoreService.addInventoryItem(userId, item.id, quantity);
+    } catch (e) {
+      debugPrint('同步添加道具失败: $e');
+      await _loadInventory();
+    }
   }
 
   /// 获取道具数量
@@ -120,5 +159,6 @@ class InventoryNotifier extends StateNotifier<Map<ItemModel, int>> {
 /// 背包操作 Provider
 final inventoryNotifierProvider =
     StateNotifierProvider<InventoryNotifier, Map<ItemModel, int>>((ref) {
-  return InventoryNotifier();
+  final firestoreService = ref.watch(firestoreServiceProvider);
+  return InventoryNotifier(firestoreService, ref);
 });

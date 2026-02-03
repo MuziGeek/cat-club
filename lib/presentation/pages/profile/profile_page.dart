@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../providers/auth_provider.dart';
+import '../../../providers/check_in_provider.dart';
 import '../../../providers/pet_provider.dart';
 import '../../../providers/user_provider.dart';
 import '../../router/app_router.dart';
@@ -17,6 +18,7 @@ class ProfilePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final userAsync = ref.watch(currentUserProvider);
     final petsAsync = ref.watch(userPetsProvider);
+    final checkInState = ref.watch(checkInProvider);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -37,7 +39,7 @@ class ProfilePage extends ConsumerWidget {
               const SizedBox(height: 16),
 
               // 统计数据
-              _buildStatsCard(petsAsync),
+              _buildStatsCard(petsAsync, checkInState),
 
               const SizedBox(height: 16),
 
@@ -55,8 +57,8 @@ class ProfilePage extends ConsumerWidget {
   /// 用户头像和信息
   Widget _buildUserHeader(AsyncValue userAsync) {
     final user = userAsync.valueOrNull;
-    final displayName = user?.displayName ?? '未设置昵称';
-    final email = user?.email ?? '';
+    final String displayName = (user?.displayName as String?) ?? '未设置昵称';
+    final String email = (user?.email as String?) ?? '';
 
     return Column(
       children: [
@@ -95,8 +97,8 @@ class ProfilePage extends ConsumerWidget {
   /// 货币信息卡片
   Widget _buildCurrencyCard(AsyncValue userAsync) {
     final user = userAsync.valueOrNull;
-    final coins = user?.coins ?? 0;
-    final diamonds = user?.diamonds ?? 0;
+    final int coins = (user?.coins as int?) ?? 0;
+    final int diamonds = (user?.diamonds as int?) ?? 0;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -147,9 +149,10 @@ class ProfilePage extends ConsumerWidget {
   }
 
   /// 统计数据卡片
-  Widget _buildStatsCard(AsyncValue petsAsync) {
+  Widget _buildStatsCard(AsyncValue petsAsync, CheckInState checkInState) {
     final pets = petsAsync.valueOrNull ?? [];
     final petCount = pets.length;
+    final consecutiveDays = checkInState.consecutiveDays;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -180,7 +183,7 @@ class ProfilePage extends ConsumerWidget {
             Expanded(
               child: _StatItem(
                 label: '签到',
-                value: '0',
+                value: consecutiveDays.toString(),
               ),
             ),
 

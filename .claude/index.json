@@ -1,0 +1,105 @@
+{
+  "projectName": "cat-club",
+  "projectDescription": "Cat Club - 虚拟宠物陪伴应用",
+  "scanTimestamp": "2026-01-29T09:45:35+08:00",
+  "scanVersion": "1.0.0",
+  "language": "Dart/Flutter",
+  "framework": "Flutter 3.x",
+  "stateManagement": "Riverpod",
+  "backend": "Firebase",
+  "modules": [
+    {
+      "path": "lib/core",
+      "name": "core",
+      "description": "核心基础设施 - 常量、主题、工具类",
+      "entryFiles": [
+        "lib/core/theme/app_theme.dart",
+        "lib/core/constants/app_constants.dart"
+      ],
+      "hasTests": false
+    },
+    {
+      "path": "lib/data",
+      "name": "data",
+      "description": "数据层 - 数据模型、仓库实现、数据源",
+      "entryFiles": [
+        "lib/data/models/pet_model.dart",
+        "lib/data/models/user_model.dart",
+        "lib/data/models/item_model.dart"
+      ],
+      "hasTests": false
+    },
+    {
+      "path": "lib/presentation",
+      "name": "presentation",
+      "description": "表示层 - 页面、组件、路由",
+      "entryFiles": [
+        "lib/presentation/router/app_router.dart"
+      ],
+      "hasTests": false
+    },
+    {
+      "path": "lib/services",
+      "name": "services",
+      "description": "服务层 - AI生成、认证等外部服务",
+      "entryFiles": [
+        "lib/services/auth_service.dart",
+        "lib/services/ai_generation_service.dart"
+      ],
+      "hasTests": false
+    },
+    {
+      "path": "lib/providers",
+      "name": "providers",
+      "description": "状态管理 - Riverpod Providers",
+      "entryFiles": [
+        "lib/providers/auth_provider.dart"
+      ],
+      "hasTests": false
+    },
+    {
+      "path": "lib/config",
+      "name": "config",
+      "description": "配置层 - Firebase配置、环境配置",
+      "entryFiles": [
+        "lib/config/firebase_options.dart"
+      ],
+      "hasTests": false
+    }
+  ],
+  "coverage": {
+    "totalFiles": 24,
+    "scannedFiles": 24,
+    "coveragePercent": 100,
+    "missingAreas": []
+  },
+  "gaps": {
+    "missingTests": [
+      "lib/core",
+      "lib/data",
+      "lib/presentation",
+      "lib/services",
+      "lib/providers"
+    ],
+    "missingDomain": [
+      "lib/domain/entities",
+      "lib/domain/usecases",
+      "lib/domain/repositories"
+    ],
+    "missingDataSources": [
+      "lib/data/repositories",
+      "lib/data/datasources"
+    ]
+  },
+  "ignoredPatterns": [
+    "node_modules/**",
+    ".git/**",
+    ".dart_tool/**",
+    "build/**",
+    "*.g.dart",
+    "*.freezed.dart",
+    "android/**",
+    "ios/**"
+  ],
+  "truncated": false
+}
