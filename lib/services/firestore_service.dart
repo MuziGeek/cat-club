@@ -24,9 +24,22 @@ class FirestoreService {
 
   /// 获取用户
   Future<UserModel?> getUser(String userId) async {
-    final doc = await _usersCollection.doc(userId).get();
-    if (!doc.exists || doc.data() == null) return null;
-    return _userFromFirestore(doc.data()!, doc.id);
+    print('[FIRESTORE_SERVICE] getUser 开始, userId=$userId');
+    try {
+      final doc = await _usersCollection.doc(userId).get();
+      print('[FIRESTORE_SERVICE] getUser 文档获取完成, exists=${doc.exists}');
+      if (!doc.exists || doc.data() == null) {
+        print('[FIRESTORE_SERVICE] getUser 文档不存在或数据为空');
+        return null;
+      }
+      final userData = _userFromFirestore(doc.data()!, doc.id);
+      print('[FIRESTORE_SERVICE] getUser 转换完成, coins=${userData.coins}');
+      return userData;
+    } catch (e, st) {
+      print('[FIRESTORE_SERVICE] getUser 异常: $e');
+      print('[FIRESTORE_SERVICE] 堆栈: $st');
+      rethrow;
+    }
   }
 
   /// 更新用户
@@ -117,6 +130,55 @@ class FirestoreService {
     }, SetOptions(merge: true));
   }
 
+  // ==================== 背包操作 ====================
+
+  /// 获取用户背包
+  Future<Map<String, int>> getUserInventory(String userId) async {
+    final doc = await _usersCollection.doc(userId).get();
+    final data = doc.data();
+    if (data == null) return {};
+    final inventory = data['inventory'];
+    if (inventory == null) return {};
+    return Map<String, int>.from(inventory as Map);
+  }
+
+  /// 使用道具（原子操作）
+  /// 返回 true 表示使用成功，false 表示数量不足
+  Future<bool> useInventoryItem(String userId, String itemId) async {
+    final docRef = _usersCollection.doc(userId);
+    return _firestore.runTransaction<bool>((tx) async {
+      final doc = await tx.get(docRef);
+      final data = doc.data();
+      if (data == null) return false;
+
+      final inventory = Map<String, int>.from((data['inventory'] ?? {}) as Map);
+      final quantity = inventory[itemId] ?? 0;
+      if (quantity <= 0) return false;
+
+      inventory[itemId] = quantity - 1;
+      if (inventory[itemId] == 0) {
+        inventory.remove(itemId);
+      }
+
+      tx.update(docRef, {'inventory': inventory});
+      return true;
+    });
+  }
+
+  /// 添加道具（原子操作）
+  Future<void> addInventoryItem(String userId, String itemId, int count) async {
+    await _usersCollection.doc(userId).update({
+      'inventory.$itemId': FieldValue.increment(count),
+    });
+  }
+
+  /// 设置初始背包（用于新用户）
+  Future<void> setInitialInventory(String userId, Map<String, int> inventory) async {
+    await _usersCollection.doc(userId).set({
+      'inventory': inventory,
+    }, SetOptions(merge: true));
+  }
+
   // ==================== 宠物状态更新 ====================
 
   /// 更新宠物状态
@@ -188,13 +250,28 @@ class FirestoreService {
   UserModel _userFromFirestore(Map<String, dynamic> data, String id) {
     final json = Map<String, dynamic>.from(data);
     json['id'] = id;
-    // Timestamp 转 DateTime
-    if (json['createdAt'] is Timestamp) {
-      json['createdAt'] = (json['createdAt'] as Timestamp).toDate().toIso8601String();
+
+    // 处理 createdAt - 确保转换为有效的 ISO8601 字符串
+    final createdAt = json['createdAt'];
+    if (createdAt is Timestamp) {
+      json['createdAt'] = createdAt.toDate().toIso8601String();
+    } else if (createdAt is String && createdAt.isNotEmpty) {
+      // 已经是有效字符串，保持不变
+      json['createdAt'] = createdAt;
+    } else {
+      // null、空字符串或其他类型，使用当前时间
+      json['createdAt'] = DateTime.now().toIso8601String();
     }
-    if (json['lastSignInDate'] is Timestamp) {
-      json['lastSignInDate'] = (json['lastSignInDate'] as Timestamp).toDate().toIso8601String();
+
+    // 处理 lastSignInDate
+    final lastSignInDate = json['lastSignInDate'];
+    if (lastSignInDate is Timestamp) {
+      json['lastSignInDate'] = lastSignInDate.toDate().toIso8601String();
+    } else if (lastSignInDate != null && lastSignInDate is! String) {
+      // 非 String 非 null 类型，设为 null 让 fromJson 处理
+      json['lastSignInDate'] = null;
     }
+
     return UserModel.fromJson(json);
   }
 
@@ -285,7 +362,7 @@ class FirestoreService {
       ),
       originalPhotoUrl: data['originalPhotoUrl'] as String?,
       cartoonAvatarUrl: data['cartoonAvatarUrl'] as String?,
-      generatedAvatars: List<String>.from(data['generatedAvatars'] ?? []),
+      generatedAvatars: List<String>.from((data['generatedAvatars'] ?? []) as List),
       status: PetStatus(
         happiness: statusData['happiness'] as int? ?? 100,
         hunger: statusData['hunger'] as int? ?? 100,
@@ -300,8 +377,8 @@ class FirestoreService {
         totalFeedings: statsData['totalFeedings'] as int? ?? 0,
         totalInteractions: statsData['totalInteractions'] as int? ?? 0,
       ),
-      equippedItems: List<String>.from(data['equippedItems'] ?? []),
-      ownedItems: List<String>.from(data['ownedItems'] ?? []),
+      equippedItems: List<String>.from((data['equippedItems'] ?? []) as List),
+      ownedItems: List<String>.from((data['ownedItems'] ?? []) as List),
       isMemorial: data['isMemorial'] as bool? ?? false,
       memorialNote: data['memorialNote'] as String?,
       memorialDate: data['memorialDate'] != null
