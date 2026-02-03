@@ -15,6 +15,7 @@ import '../pages/main/main_shell_page.dart';
 import '../pages/pet/pet_create_page.dart';
 import '../pages/profile/profile_page.dart';
 import '../pages/profile/settings_page.dart';
+import '../pages/shop/shop_page.dart';
 
 /// 路由路径常量
 class AppRoutes {
@@ -27,6 +28,7 @@ class AppRoutes {
   static const String petCreate = '/pet-create';
   static const String petDetail = '/pet/:id';
   static const String wardrobe = '/wardrobe';
+  static const String shop = '/shop';
   static const String community = '/community';
   static const String profile = '/profile';
   static const String settings = '/settings';
@@ -155,6 +157,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.settings,
         builder: (context, state) => const SettingsPage(),
+      ),
+
+      // 商店页面
+      GoRoute(
+        path: AppRoutes.shop,
+        builder: (context, state) => const ShopPage(),
       ),
     ],
 
