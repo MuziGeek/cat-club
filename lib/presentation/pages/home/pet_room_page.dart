@@ -6,14 +6,20 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../data/models/item_model.dart';
 import '../../../data/models/pet_model.dart';
+import '../../../providers/check_in_provider.dart';
 import '../../../providers/inventory_provider.dart';
 import '../../../providers/pet_provider.dart';
+import '../../../providers/photo_upload_provider.dart';
 import '../../../providers/user_provider.dart';
+import '../../../services/storage_service.dart';
 import '../../router/app_router.dart';
 import '../../widgets/inventory/inventory_fab.dart';
 import '../../widgets/inventory/inventory_popup.dart';
 import '../../widgets/pet/interactive_pet_widget.dart';
+import '../../widgets/pet/pet_selector.dart';
 import '../../widgets/pet/pet_status_bar.dart';
+import '../../widgets/photo/photo_picker_sheet.dart';
+import 'check_in_dialog.dart';
 
 /// 宠物房间主页面
 ///
@@ -29,22 +35,85 @@ class PetRoomPage extends ConsumerStatefulWidget {
   ConsumerState<PetRoomPage> createState() => _PetRoomPageState();
 }
 
-class _PetRoomPageState extends ConsumerState<PetRoomPage> {
+class _PetRoomPageState extends ConsumerState<PetRoomPage>
+    with WidgetsBindingObserver {
   bool _isInventoryOpen = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupAutoSelectListener();
+      _syncStatusOnInit();
+      _checkAndShowCheckInDialog();
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _syncStatusOnResume();
+    }
+  }
+
+  /// 应用启动时同步状态
+  void _syncStatusOnInit() {
+    final petId = ref.read(selectedPetIdProvider);
+    if (petId != null) {
+      ref.read(petInteractionProvider.notifier).syncDecayedStatusIfNeeded(petId);
+    }
+  }
+
+  /// 应用恢复时同步状态
+  void _syncStatusOnResume() {
+    final petId = ref.read(selectedPetIdProvider);
+    if (petId != null) {
+      ref.read(petInteractionProvider.notifier).syncDecayedStatusIfNeeded(petId);
+    }
+  }
+
+  /// 检查并显示签到对话框
+  void _checkAndShowCheckInDialog() async {
+    // 延迟一下等页面加载完成
+    await Future.delayed(const Duration(milliseconds: 500));
+    if (!mounted) return;
+
+    final checkInState = ref.read(checkInProvider);
+    if (!checkInState.hasCheckedInToday && !checkInState.isLoading) {
+      final success = await showCheckInDialog(context);
+      if (success && mounted) {
+        // 签到成功，强制刷新用户数据
+        ref.invalidate(currentUserProvider);
+        ref.read(inventoryNotifierProvider.notifier).refresh();
+      }
+    }
   }
 
   void _setupAutoSelectListener() {
     ref.listenManual(userPetsProvider, (previous, next) {
       next.whenData((pets) {
         final selectedPetId = ref.read(selectedPetIdProvider);
-        if (selectedPetId == null && pets.isNotEmpty) {
+
+        // 检查当前选中的宠物是否还存在（处理删除后的切换）
+        final selectedPetExists = pets.any((p) => p.id == selectedPetId);
+
+        if (!selectedPetExists) {
+          if (pets.isEmpty) {
+            // 没有宠物了，清空选中状态
+            ref.read(selectedPetIdProvider.notifier).state = null;
+          } else {
+            // 切换到第一只宠物
+            ref.read(selectedPetIdProvider.notifier).state = pets.first.id;
+          }
+        } else if (selectedPetId == null && pets.isNotEmpty) {
+          // 初始加载时自动选中第一只
           ref.read(selectedPetIdProvider.notifier).state = pets.first.id;
         }
       });
@@ -71,6 +140,8 @@ class _PetRoomPageState extends ConsumerState<PetRoomPage> {
                 Column(
                   children: [
                     _buildTopBar(userAsync),
+                    // 宠物切换栏（多只宠物时显示）
+                    const PetSelector(),
                     Expanded(
                       child: _buildPetArea(petAsync),
                     ),
@@ -154,41 +225,86 @@ class _PetRoomPageState extends ConsumerState<PetRoomPage> {
     final pet = ref.watch(selectedPetWithDecayProvider).valueOrNull;
     final level = pet?.stats.level ?? 1;
 
+    final checkInState = ref.watch(checkInProvider);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
-          // 金币显示
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.monetization_on, color: Colors.amber, size: 20),
-                const SizedBox(width: 4),
-                Text(_formatNumber(coins), style: AppTextStyles.numberSmall),
-              ],
+          // 签到按钮
+          GestureDetector(
+            onTap: () async {
+              print('[PET_ROOM] 签到按钮点击');
+              final success = await showCheckInDialog(context);
+              print('[PET_ROOM] 签到对话框返回: success=$success');
+              if (success && mounted) {
+                // 签到成功，强制刷新用户数据
+                print('[PET_ROOM] 正在 invalidate currentUserProvider');
+                ref.invalidate(currentUserProvider);
+                ref.read(inventoryNotifierProvider.notifier).refresh();
+                print('[PET_ROOM] invalidate 完成');
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: checkInState.hasCheckedInToday
+                    ? Colors.grey[200]
+                    : const Color(0xFFFFE0E0),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                checkInState.hasCheckedInToday
+                    ? Icons.check_circle
+                    : Icons.calendar_today,
+                color: checkInState.hasCheckedInToday
+                    ? Colors.grey
+                    : const Color(0xFFFF6B6B),
+                size: 20,
+              ),
             ),
           ),
           const SizedBox(width: 8),
-          // 钻石显示
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(20),
+
+          // 金币显示（点击进入商店）
+          GestureDetector(
+            onTap: () => context.push(AppRoutes.shop),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.monetization_on, color: Colors.amber, size: 20),
+                  const SizedBox(width: 4),
+                  Text(_formatNumber(coins), style: AppTextStyles.numberSmall),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.add_circle_outline, color: Colors.grey, size: 14),
+                ],
+              ),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.diamond, color: Colors.blue, size: 20),
-                const SizedBox(width: 4),
-                Text(_formatNumber(diamonds), style: AppTextStyles.numberSmall),
-              ],
+          ),
+          const SizedBox(width: 8),
+          // 钻石显示（点击进入商店）
+          GestureDetector(
+            onTap: () => context.push(AppRoutes.shop),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.diamond, color: Colors.blue, size: 20),
+                  const SizedBox(width: 4),
+                  Text(_formatNumber(diamonds), style: AppTextStyles.numberSmall),
+                ],
+              ),
             ),
           ),
 
@@ -235,6 +351,7 @@ class _PetRoomPageState extends ConsumerState<PetRoomPage> {
           onPet: () => _handlePet(pet.id),
           onRest: () => _handleRest(pet.id),
           onPlay: () => _handlePlay(pet.id),
+          onAvatarTap: () => _handleUpdatePhoto(pet.id),
           onItemDropped: (item) => _handleItemDropped(pet.id, item),
         );
       },
@@ -330,6 +447,45 @@ class _PetRoomPageState extends ConsumerState<PetRoomPage> {
     final success = await ref.read(petInteractionProvider.notifier).play(petId);
     if (success && mounted) {
       _showFeedback('玩耍成功', '心情 +20, 精力 -10', Icons.sports_esports, AppColors.happinessColor);
+    }
+  }
+
+  /// 处理更新照片
+  void _handleUpdatePhoto(String petId) async {
+    // 显示照片选择弹窗
+    final selected = await PhotoPickerSheet.show(context);
+
+    if (!selected || !mounted) return;
+
+    // 获取选中的照片
+    final photoState = ref.read(photoUploadProvider);
+    final photoFile = photoState.previewFile;
+
+    if (photoFile == null) {
+      _showSnackBar('未选择照片');
+      return;
+    }
+
+    // 显示上传中提示
+    _showSnackBar('正在上传照片...');
+
+    // 上传照片
+    final storageService = ref.read(storageServiceProvider);
+    final newUrl = await ref.read(petInteractionProvider.notifier).updatePetPhoto(
+          petId: petId,
+          photoFile: photoFile,
+          storageService: storageService,
+        );
+
+    // 清理状态
+    ref.read(photoUploadProvider.notifier).reset();
+
+    if (!mounted) return;
+
+    if (newUrl != null) {
+      _showFeedback('更新成功', '宠物照片已更新', Icons.check_circle, Colors.green);
+    } else {
+      _showSnackBar('照片上传失败，请重试');
     }
   }
 

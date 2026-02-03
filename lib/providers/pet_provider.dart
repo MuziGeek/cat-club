@@ -1,8 +1,12 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/utils/status_decay_calculator.dart';
 import '../data/models/pet_model.dart';
 import '../services/firestore_service.dart';
+import '../services/storage_service.dart';
 import 'auth_provider.dart';
 import 'user_provider.dart';
 
@@ -115,6 +119,18 @@ class PetCreateNotifier extends StateNotifier<PetCreateState> {
   void reset() {
     state = const PetCreateState();
   }
+
+  /// 检查是否可以创建新宠物
+  ///
+  /// [userId] 用户 ID
+  ///
+  /// 返回 (canCreate, currentCount, maxCount)
+  Future<(bool, int, int)> canCreatePet(String userId) async {
+    final user = await _firestoreService.getUser(userId);
+    final maxPets = user?.maxPets ?? 4;
+    final currentCount = user?.petIds.length ?? 0;
+    return (currentCount < maxPets, currentCount, maxPets);
+  }
 }
 
 /// 宠物创建 Provider
@@ -131,6 +147,48 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
 
   PetInteractionNotifier(this._firestoreService, this._ref)
       : super(const AsyncValue.data(null));
+
+  /// 放生/删除宠物（永久删除）
+  ///
+  /// [petId] 宠物 ID
+  /// [userId] 用户 ID
+  /// [storageService] 可选的 Storage 服务，用于删除照片
+  ///
+  /// 返回 true 表示删除成功
+  Future<bool> releasePet({
+    required String petId,
+    required String userId,
+    StorageService? storageService,
+  }) async {
+    state = const AsyncValue.loading();
+    try {
+      // 1. 获取宠物信息（用于删除照片）
+      final pet = await _firestoreService.getPet(petId);
+
+      // 2. 删除 Storage 中的照片（如果有且提供了 storageService）
+      if (storageService != null && pet?.originalPhotoUrl != null && pet!.originalPhotoUrl!.isNotEmpty) {
+        try {
+          await storageService.deleteImage(pet.originalPhotoUrl!);
+        } catch (e) {
+          // 照片删除失败不阻塞流程
+          debugPrint('删除照片失败: $e');
+        }
+      }
+
+      // 3. 从用户列表移除
+      await _firestoreService.removePetFromUser(userId, petId);
+
+      // 4. 删除宠物文档
+      await _firestoreService.deletePet(petId);
+
+      state = const AsyncValue.data(null);
+      return true;
+    } catch (e, st) {
+      debugPrint('放生宠物失败: $e');
+      state = AsyncValue.error(e, st);
+      return false;
+    }
+  }
 
   /// 同步衰减状态到 Firestore
   /// 在互动前调用，确保衰减后的状态被持久化
@@ -327,9 +385,80 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
     }
   }
 
+  /// 同步衰减状态（公开方法，供外部调用）
+  ///
+  /// 在应用启动/恢复时调用，确保离线期间的状态衰减被持久化
+  Future<void> syncDecayedStatusIfNeeded(String petId) async {
+    try {
+      final pet = await _firestoreService.getPet(petId);
+      if (pet == null) return;
+      await _syncDecayedStatus(pet);
+    } catch (e) {
+      // 静默失败，不影响用户体验
+      debugPrint('同步衰减状态失败: $e');
+    }
+  }
+
   /// 重置状态
   void reset() {
     state = const AsyncValue.data(null);
+  }
+
+  /// 更新宠物照片
+  ///
+  /// [petId] 宠物 ID
+  /// [photoFile] 新照片文件
+  /// [storageService] Storage 服务
+  ///
+  /// 返回新照片的 URL，失败返回 null
+  Future<String?> updatePetPhoto({
+    required String petId,
+    required File photoFile,
+    required StorageService storageService,
+  }) async {
+    state = const AsyncValue.loading();
+    try {
+      // 获取用户 ID
+      final authState = _ref.read(authStateProvider);
+      final userId = authState.valueOrNull?.uid;
+      if (userId == null) throw Exception('用户未登录');
+
+      // 获取当前宠物信息
+      final pet = await _firestoreService.getPet(petId);
+      if (pet == null) throw Exception('宠物不存在');
+
+      // 上传新照片
+      final newPhotoUrl = await storageService.uploadPetAvatar(
+        userId: userId,
+        petId: petId,
+        imageFile: photoFile,
+      );
+
+      if (newPhotoUrl == null) throw Exception('照片上传失败');
+
+      // 更新宠物文档
+      await _firestoreService.updatePet(petId, {
+        'originalPhotoUrl': newPhotoUrl,
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+
+      // 如果有旧照片，尝试删除
+      if (pet.originalPhotoUrl != null && pet.originalPhotoUrl!.isNotEmpty) {
+        try {
+          await storageService.deleteImage(pet.originalPhotoUrl!);
+        } catch (e) {
+          // 删除失败不影响主流程
+          debugPrint('删除旧照片失败: $e');
+        }
+      }
+
+      state = const AsyncValue.data(null);
+      return newPhotoUrl;
+    } catch (e, st) {
+      debugPrint('更新宠物照片失败: $e');
+      state = AsyncValue.error(e, st);
+      return null;
+    }
   }
 }
 

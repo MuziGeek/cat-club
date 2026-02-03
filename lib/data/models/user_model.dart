@@ -32,6 +32,10 @@ class UserModel with _$UserModel {
 
     // 宠物
     @Default([]) List<String> petIds,
+    @Default(4) int maxPets, // 宠物数量上限，默认4只
+
+    // 背包 - itemId -> quantity
+    @Default({}) Map<String, int> inventory,
 
     // 成就
     @Default([]) List<String> achievements,
