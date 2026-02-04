@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../providers/achievement_provider.dart';
 import '../../../providers/auth_provider.dart';
 import '../../../providers/check_in_provider.dart';
 import '../../../providers/pet_provider.dart';
@@ -19,6 +20,7 @@ class ProfilePage extends ConsumerWidget {
     final userAsync = ref.watch(currentUserProvider);
     final petsAsync = ref.watch(userPetsProvider);
     final checkInState = ref.watch(checkInProvider);
+    final achievementStats = ref.watch(achievementStatsProvider);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -39,7 +41,7 @@ class ProfilePage extends ConsumerWidget {
               const SizedBox(height: 16),
 
               // 统计数据
-              _buildStatsCard(petsAsync, checkInState),
+              _buildStatsCard(petsAsync, checkInState, achievementStats),
 
               const SizedBox(height: 16),
 
@@ -149,10 +151,11 @@ class ProfilePage extends ConsumerWidget {
   }
 
   /// 统计数据卡片
-  Widget _buildStatsCard(AsyncValue petsAsync, CheckInState checkInState) {
+  Widget _buildStatsCard(AsyncValue petsAsync, CheckInState checkInState, AchievementStats achievementStats) {
     final pets = petsAsync.valueOrNull ?? [];
     final petCount = pets.length;
     final consecutiveDays = checkInState.consecutiveDays;
+    final unlockedCount = achievementStats.unlockedCount;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -191,7 +194,7 @@ class ProfilePage extends ConsumerWidget {
             Expanded(
               child: _StatItem(
                 label: '成就',
-                value: '0',
+                value: unlockedCount.toString(),
               ),
             ),
           ],
@@ -240,9 +243,7 @@ class ProfilePage extends ConsumerWidget {
               icon: Icons.emoji_events,
               iconColor: Colors.amber,
               title: '成就',
-              onTap: () {
-                // TODO: 成就页面
-              },
+              onTap: () => context.push(AppRoutes.achievements),
             ),
             const Divider(height: 1, indent: 56),
 

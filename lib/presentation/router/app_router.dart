@@ -13,6 +13,7 @@ import '../pages/community/community_page.dart';
 import '../pages/home/pet_room_page.dart';
 import '../pages/main/main_shell_page.dart';
 import '../pages/pet/pet_create_page.dart';
+import '../pages/profile/achievement_page.dart';
 import '../pages/profile/profile_page.dart';
 import '../pages/profile/settings_page.dart';
 import '../pages/shop/shop_page.dart';
@@ -29,6 +30,7 @@ class AppRoutes {
   static const String petDetail = '/pet/:id';
   static const String wardrobe = '/wardrobe';
   static const String shop = '/shop';
+  static const String achievements = '/achievements';
   static const String community = '/community';
   static const String profile = '/profile';
   static const String settings = '/settings';
@@ -163,6 +165,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.shop,
         builder: (context, state) => const ShopPage(),
+      ),
+
+      // 成就页面
+      GoRoute(
+        path: AppRoutes.achievements,
+        builder: (context, state) => const AchievementPage(),
       ),
     ],
 
