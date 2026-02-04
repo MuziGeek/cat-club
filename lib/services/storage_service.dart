@@ -1,13 +1,18 @@
 import 'dart:io';
 
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show Color;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as path;
+import 'package:tencentcloud_cos_sdk_plugin/cos.dart';
+import 'package:tencentcloud_cos_sdk_plugin/cos_transfer_manger.dart';
+import 'package:tencentcloud_cos_sdk_plugin/pigeon.dart';
+import 'package:tencentcloud_cos_sdk_plugin/transfer_task.dart';
 import 'package:uuid/uuid.dart';
+
+import '../config/cos_config.dart';
 
 /// Storage Service Provider
 final storageServiceProvider = Provider<StorageService>((ref) {
@@ -23,13 +28,46 @@ enum ImageSourceType {
 /// 上传进度回调
 typedef UploadProgressCallback = void Function(double progress);
 
-/// Firebase Storage 服务
+/// 腾讯云 COS 存储服务
 ///
 /// 封装图片选择、裁剪和上传功能
 class StorageService {
-  final FirebaseStorage _storage = FirebaseStorage.instance;
   final ImagePicker _picker = ImagePicker();
   final Uuid _uuid = const Uuid();
+
+  CosTransferManger? _transferManager;
+  bool _isInitialized = false;
+
+  /// 初始化 COS 服务
+  Future<void> _ensureInitialized() async {
+    if (_isInitialized) return;
+
+    if (!CosConfig.isConfigured) {
+      debugPrint('COS 未配置 SecretKey，无法初始化');
+      return;
+    }
+
+    try {
+      // 初始化 COS 服务
+      await Cos().initWithPlainSecret(
+        CosConfig.secretId,
+        CosConfig.secretKey,
+      );
+
+      // 注册默认服务
+      await Cos().registerDefaultService(CosConfig.region);
+
+      // 注册 TransferManager
+      final config = TransferConfig();
+      await Cos().registerDefaultTransferManger(CosConfig.region, config);
+
+      _transferManager = Cos().getDefaultTransferManger();
+      _isInitialized = true;
+      debugPrint('COS 初始化成功');
+    } catch (e) {
+      debugPrint('COS 初始化失败: $e');
+    }
+  }
 
   // ==================== 图片选择 ====================
 
@@ -174,7 +212,7 @@ class StorageService {
     );
   }
 
-  /// 通用图片上传方法
+  /// 通用图片上传方法（使用腾讯云 COS）
   Future<String?> _uploadImage({
     required String folder,
     required File imageFile,
@@ -182,6 +220,13 @@ class StorageService {
     UploadProgressCallback? onProgress,
   }) async {
     try {
+      await _ensureInitialized();
+
+      if (_transferManager == null) {
+        debugPrint('COS TransferManager 未初始化');
+        return null;
+      }
+
       // 生成文件名
       final extension = path.extension(imageFile.path).toLowerCase();
       final validExtension =
@@ -189,36 +234,42 @@ class StorageService {
               ? extension
               : '.jpg';
       final finalFileName = fileName ?? _uuid.v4();
-      final storagePath = '$folder/$finalFileName$validExtension';
+      final cosKey = '$folder/$finalFileName$validExtension';
 
-      // 创建上传引用
-      final ref = _storage.ref().child(storagePath);
-
-      // 设置元数据
-      final metadata = SettableMetadata(
-        contentType: 'image/${validExtension.substring(1)}',
-        customMetadata: {
-          'uploadedAt': DateTime.now().toIso8601String(),
+      // 执行上传
+      final uploadTask = await _transferManager!.upload(
+        CosConfig.bucket,
+        cosKey,
+        filePath: imageFile.path,
+        resultListener: ResultListener(
+          successCallBack: (result) {
+            debugPrint('COS 上传成功: $cosKey');
+          },
+          failCallBack: (clientException, serviceException) {
+            debugPrint('COS 上传失败: $clientException, $serviceException');
+          },
+        ),
+        stateCallback: (state) {
+          debugPrint('COS 上传状态: $state');
+        },
+        progressCallBack: (complete, target) {
+          if (onProgress != null && target > 0) {
+            onProgress(complete / target);
+          }
         },
       );
 
-      // 执行上传
-      final uploadTask = ref.putFile(imageFile, metadata);
+      // 等待上传完成
+      final result = await uploadTask.getResult();
 
-      // 监听上传进度
-      if (onProgress != null) {
-        uploadTask.snapshotEvents.listen((event) {
-          final progress = event.bytesTransferred / event.totalBytes;
-          onProgress(progress);
-        });
+      if (result != null) {
+        // 返回完整的 COS 访问 URL
+        final downloadUrl = '${CosConfig.endpoint}/$cosKey';
+        debugPrint('COS 上传完成，URL: $downloadUrl');
+        return downloadUrl;
       }
 
-      // 等待上传完成
-      await uploadTask;
-
-      // 获取下载 URL
-      final downloadUrl = await ref.getDownloadURL();
-      return downloadUrl;
+      return null;
     } catch (e) {
       debugPrint('上传图片失败: $e');
       return null;
@@ -232,12 +283,42 @@ class StorageService {
   /// [url] 图片的下载 URL
   Future<bool> deleteImage(String url) async {
     try {
-      final ref = _storage.refFromURL(url);
-      await ref.delete();
+      await _ensureInitialized();
+
+      // 从 URL 提取 COS Key
+      final cosKey = _extractCosKeyFromUrl(url);
+      if (cosKey == null) {
+        debugPrint('无法从 URL 提取 COS Key: $url');
+        return false;
+      }
+
+      // 使用 COS SDK 删除对象
+      final service = Cos().getDefaultService();
+      await service.deleteObject(
+        CosConfig.bucket,
+        cosKey,
+      );
+
+      debugPrint('COS 删除成功: $cosKey');
       return true;
     } catch (e) {
       debugPrint('删除图片失败: $e');
       return false;
+    }
+  }
+
+  /// 从 URL 提取 COS Key
+  String? _extractCosKeyFromUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      // URL 格式: https://bucket.cos.region.myqcloud.com/key
+      if (uri.path.isNotEmpty) {
+        // 移除开头的 /
+        return uri.path.startsWith('/') ? uri.path.substring(1) : uri.path;
+      }
+      return null;
+    } catch (e) {
+      return null;
     }
   }
 
@@ -279,5 +360,7 @@ class StorageService {
       onProgress: onProgress,
     );
   }
-}
 
+  /// 检查 COS 是否已配置
+  bool get isConfigured => CosConfig.isConfigured;
+}

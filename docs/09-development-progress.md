@@ -1,6 +1,101 @@
 # 开发进度记录
 
-> 最后更新：2026-02-03 17:56
+> 最后更新：2026-02-04 15:17
+
+---
+
+## 2026-02-04 开发日志（腾讯云 COS 存储服务）
+
+### 概述
+
+本次开发将照片上传服务从 Firebase Storage 迁移到**腾讯云 COS（对象存储）**，解决了 Firebase Storage 需要 Blaze 付费计划的限制问题。实现了完整的图片选择、裁剪、上传流程。
+
+### 完成事项
+
+#### Phase 1: 腾讯云 COS 集成 ✅
+
+| 任务 | 详情 | 状态 |
+|------|------|------|
+| COS SDK 集成 | 添加 `tencentcloud_cos_sdk_plugin` 依赖 | ✅ |
+| CosConfig 配置类 | 存储桶、地域、密钥配置 | ✅ |
+| COS 初始化 | PlainSecret 认证方式初始化 | ✅ |
+| TransferManager | 注册默认传输管理器 | ✅ |
+
+**新增文件：**
+- `lib/config/cos_config.dart` - COS 配置类（31行）
+
+**依赖更新：**
+```yaml
+dependencies:
+  tencentcloud_cos_sdk_plugin: ^1.0.8
+```
+
+#### Phase 2: StorageService 重构 ✅
+
+| 任务 | 详情 | 状态 |
+|------|------|------|
+| 图片选择 | `pickImage()` - 相机/相册选择 | ✅ |
+| 图片裁剪 | `cropImage()` - 1:1 裁剪支持 | ✅ |
+| 宠物照片上传 | `uploadPetPhoto()` - 上传到 pets/{userId}/photos | ✅ |
+| 宠物头像上传 | `uploadPetAvatar()` - 上传到 pets/{userId}/avatars | ✅ |
+| 用户头像上传 | `uploadUserAvatar()` - 上传到 users/{userId} | ✅ |
+| 图片删除 | `deleteImage()` - 根据 URL 删除 COS 对象 | ✅ |
+| 一站式方法 | `pickCropAndUploadPetPhoto()` - 选择+裁剪+上传 | ✅ |
+| 上传进度回调 | `UploadProgressCallback` 类型定义 | ✅ |
+
+**修改文件：**
+- `lib/services/storage_service.dart` - 完全重写为 COS 实现（367行，+125/-31）
+
+### 新增/修改文件清单
+
+| 操作 | 文件路径 | 说明 |
+|------|----------|------|
+| 新建 | `lib/config/cos_config.dart` | 腾讯云 COS 配置 |
+| 修改 | `lib/services/storage_service.dart` | 重构为 COS 实现 |
+| 修改 | `pubspec.yaml` | 添加 COS SDK 依赖 |
+| 修改 | `pubspec.lock` | 依赖锁定文件更新 |
+
+### COS 存储路径设计
+
+| 类型 | 路径格式 | 示例 |
+|------|----------|------|
+| 宠物照片 | `pets/{userId}/photos/{uuid}.jpg` | `pets/abc123/photos/xxx.jpg` |
+| 宠物头像 | `pets/{userId}/avatars/{petId}.jpg` | `pets/abc123/avatars/pet1.jpg` |
+| 用户头像 | `users/{userId}/avatar.jpg` | `users/abc123/avatar.jpg` |
+
+### 功能状态总结
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| 图片选择（相机） | ✅ 完成 | ImagePicker 集成 |
+| 图片选择（相册） | ✅ 完成 | ImagePicker 集成 |
+| 图片裁剪 | ✅ 完成 | ImageCropper 1:1 裁剪 |
+| COS 上传 | ✅ 完成 | TransferManager 异步上传 |
+| 上传进度 | ✅ 完成 | progressCallBack 回调 |
+| 图片删除 | ✅ 完成 | COS deleteObject API |
+
+### ⚠️ 安全提醒
+
+当前配置使用固定密钥（SecretId/SecretKey），仅用于开发测试：
+
+```dart
+// TODO: 生产环境应迁移至 STS 临时密钥
+static const String secretKey = 'xxx...';
+```
+
+**生产环境建议：**
+1. 使用 STS 临时密钥服务
+2. 将密钥移至后端服务
+3. 使用环境变量配置
+
+### 后续计划
+
+| 优先级 | 任务 | 说明 |
+|--------|------|------|
+| P0 | 集成到宠物创建流程 | PetCreatePage 调用 COS 上传 |
+| P1 | STS 临时密钥 | 生产环境安全方案 |
+| P1 | 头像更新功能 | PetRoomPage 长按更新头像 |
+| P2 | 图片压缩优化 | 减少上传体积 |
 
 ---
 
