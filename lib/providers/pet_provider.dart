@@ -4,9 +4,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/utils/status_decay_calculator.dart';
+import '../data/models/achievement_model.dart';
 import '../data/models/pet_model.dart';
 import '../services/firestore_service.dart';
 import '../services/storage_service.dart';
+import 'achievement_provider.dart';
 import 'auth_provider.dart';
 import 'user_provider.dart';
 
@@ -241,6 +243,21 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
         incrementFeedings: true,
       );
 
+      // 更新用户统计并检查成就
+      final authState = _ref.read(authStateProvider);
+      final userId = authState.valueOrNull?.uid;
+      if (userId != null) {
+        await _firestoreService.incrementUserStat(userId, 'feedCount');
+        final stats = await _firestoreService.getUserStats(userId);
+        if (stats != null) {
+          await _ref.read(achievementNotifierProvider.notifier).checkAndUpdateProgress(
+            userId: userId,
+            type: AchievementType.feedCount,
+            currentValue: stats['feedCount'] ?? 0,
+          );
+        }
+      }
+
       state = const AsyncValue.data(null);
       return true;
     } catch (e, st) {
@@ -272,6 +289,21 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
         intimacyGain: 10,
         incrementInteractions: true,
       );
+
+      // 更新用户统计并检查成就
+      final authState = _ref.read(authStateProvider);
+      final userId = authState.valueOrNull?.uid;
+      if (userId != null) {
+        await _firestoreService.incrementUserStat(userId, 'petCount');
+        final stats = await _firestoreService.getUserStats(userId);
+        if (stats != null) {
+          await _ref.read(achievementNotifierProvider.notifier).checkAndUpdateProgress(
+            userId: userId,
+            type: AchievementType.petCount,
+            currentValue: stats['petCount'] ?? 0,
+          );
+        }
+      }
 
       state = const AsyncValue.data(null);
       return true;
@@ -341,6 +373,21 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
         incrementInteractions: true,
       );
 
+      // 更新用户统计并检查成就
+      final authState = _ref.read(authStateProvider);
+      final userId = authState.valueOrNull?.uid;
+      if (userId != null) {
+        await _firestoreService.incrementUserStat(userId, 'cleanCount');
+        final stats = await _firestoreService.getUserStats(userId);
+        if (stats != null) {
+          await _ref.read(achievementNotifierProvider.notifier).checkAndUpdateProgress(
+            userId: userId,
+            type: AchievementType.cleanCount,
+            currentValue: stats['cleanCount'] ?? 0,
+          );
+        }
+      }
+
       state = const AsyncValue.data(null);
       return true;
     } catch (e, st) {
@@ -376,6 +423,21 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
         intimacyGain: 15,
         incrementInteractions: true,
       );
+
+      // 更新用户统计并检查成就
+      final authState = _ref.read(authStateProvider);
+      final userId = authState.valueOrNull?.uid;
+      if (userId != null) {
+        await _firestoreService.incrementUserStat(userId, 'playCount');
+        final stats = await _firestoreService.getUserStats(userId);
+        if (stats != null) {
+          await _ref.read(achievementNotifierProvider.notifier).checkAndUpdateProgress(
+            userId: userId,
+            type: AchievementType.playCount,
+            currentValue: stats['playCount'] ?? 0,
+          );
+        }
+      }
 
       state = const AsyncValue.data(null);
       return true;
