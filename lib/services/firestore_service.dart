@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../data/models/achievement_model.dart';
 import '../data/models/pet_model.dart';
 import '../data/models/user_model.dart';
 
@@ -395,6 +396,177 @@ class FirestoreService {
       lastInteractionAt: data['lastInteractionAt'] is Timestamp
           ? (data['lastInteractionAt'] as Timestamp).toDate()
           : DateTime.parse(getDateTimeString(data['lastInteractionAt'])!),
+    );
+  }
+
+  // ==================== 成就系统 ====================
+
+  /// 成就子集合引用
+  CollectionReference<Map<String, dynamic>> _userAchievementsCollection(String userId) =>
+      _usersCollection.doc(userId).collection('achievements');
+
+  /// 获取用户成就进度流
+  Stream<List<UserAchievement>> userAchievementsStream(String userId) {
+    return _userAchievementsCollection(userId).snapshots().map((snapshot) {
+      return snapshot.docs.map((doc) {
+        return _userAchievementFromFirestore(doc.data(), doc.id);
+      }).toList();
+    });
+  }
+
+  /// 获取用户所有成就进度
+  Future<List<UserAchievement>> getUserAchievements(String userId) async {
+    final snapshot = await _userAchievementsCollection(userId).get();
+    return snapshot.docs.map((doc) {
+      return _userAchievementFromFirestore(doc.data(), doc.id);
+    }).toList();
+  }
+
+  /// 解锁成就
+  Future<void> unlockAchievement({
+    required String userId,
+    required String achievementId,
+    required int currentValue,
+  }) async {
+    await _userAchievementsCollection(userId).doc(achievementId).set({
+      'achievementId': achievementId,
+      'currentValue': currentValue,
+      'isUnlocked': true,
+      'unlockedAt': FieldValue.serverTimestamp(),
+      'isRewardClaimed': false,
+      'claimedAt': null,
+    }, SetOptions(merge: true));
+  }
+
+  /// 更新成就进度
+  Future<void> updateAchievementProgress({
+    required String userId,
+    required String achievementId,
+    required int currentValue,
+  }) async {
+    final docRef = _userAchievementsCollection(userId).doc(achievementId);
+    final doc = await docRef.get();
+
+    if (!doc.exists) {
+      // 创建新进度记录
+      await docRef.set({
+        'achievementId': achievementId,
+        'currentValue': currentValue,
+        'isUnlocked': false,
+        'unlockedAt': null,
+        'isRewardClaimed': false,
+        'claimedAt': null,
+      });
+    } else {
+      // 只更新进度值（不覆盖已解锁状态）
+      final data = doc.data();
+      if (data != null && data['isUnlocked'] != true) {
+        await docRef.update({'currentValue': currentValue});
+      }
+    }
+  }
+
+  /// 领取成就奖励（事务操作）
+  Future<void> claimAchievementReward({
+    required String userId,
+    required String achievementId,
+    required AchievementReward reward,
+  }) async {
+    final userDocRef = _usersCollection.doc(userId);
+    final achievementDocRef = _userAchievementsCollection(userId).doc(achievementId);
+
+    await _firestore.runTransaction((tx) async {
+      // 检查成就状态
+      final achievementDoc = await tx.get(achievementDocRef);
+      if (!achievementDoc.exists) {
+        throw Exception('成就不存在');
+      }
+
+      final data = achievementDoc.data();
+      if (data == null || data['isUnlocked'] != true) {
+        throw Exception('成就尚未解锁');
+      }
+      if (data['isRewardClaimed'] == true) {
+        throw Exception('奖励已领取');
+      }
+
+      // 发放货币奖励
+      final userUpdates = <String, dynamic>{};
+      if (reward.coins > 0) {
+        userUpdates['coins'] = FieldValue.increment(reward.coins);
+      }
+      if (reward.diamonds > 0) {
+        userUpdates['diamonds'] = FieldValue.increment(reward.diamonds);
+      }
+
+      // 发放道具奖励
+      for (final entry in reward.items.entries) {
+        userUpdates['inventory.${entry.key}'] = FieldValue.increment(entry.value);
+      }
+
+      if (userUpdates.isNotEmpty) {
+        tx.update(userDocRef, userUpdates);
+      }
+
+      // 标记奖励已领取
+      tx.update(achievementDocRef, {
+        'isRewardClaimed': true,
+        'claimedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  /// 获取用户统计数据（用于成就检查）
+  Future<Map<String, int>?> getUserStats(String userId) async {
+    try {
+      final userDoc = await _usersCollection.doc(userId).get();
+      final userData = userDoc.data();
+      if (userData == null) return null;
+
+      final stats = userData['stats'] as Map<String, dynamic>? ?? {};
+      final inventory = userData['inventory'] as Map<String, dynamic>? ?? {};
+      final petIds = (userData['petIds'] as List?)?.length ?? 0;
+
+      return {
+        'petCount': stats['petCount'] as int? ?? 0,
+        'feedCount': stats['feedCount'] as int? ?? 0,
+        'playCount': stats['playCount'] as int? ?? 0,
+        'cleanCount': stats['cleanCount'] as int? ?? 0,
+        'maxLevel': stats['maxLevel'] as int? ?? 1,
+        'maxIntimacy': stats['maxIntimacy'] as int? ?? 0,
+        'checkInStreak': stats['checkInStreak'] as int? ?? 0,
+        'checkInTotal': stats['checkInTotal'] as int? ?? 0,
+        'itemTypeCount': inventory.length,
+        'petOwned': petIds,
+      };
+    } catch (e) {
+      print('[FIRESTORE] 获取用户统计失败: $e');
+      return null;
+    }
+  }
+
+  /// 增加用户统计计数
+  Future<void> incrementUserStat(String userId, String statName, {int value = 1}) async {
+    await _usersCollection.doc(userId).set({
+      'stats': {
+        statName: FieldValue.increment(value),
+      },
+    }, SetOptions(merge: true));
+  }
+
+  /// UserAchievement 从 Firestore 转换
+  UserAchievement _userAchievementFromFirestore(Map<String, dynamic> data, String id) {
+    return UserAchievement(
+      achievementId: data['achievementId'] as String? ?? id,
+      currentValue: data['currentValue'] as int? ?? 0,
+      isUnlocked: data['isUnlocked'] as bool? ?? false,
+      unlockedAt: data['unlockedAt'] is Timestamp
+          ? (data['unlockedAt'] as Timestamp).toDate()
+          : null,
+      isRewardClaimed: data['isRewardClaimed'] as bool? ?? false,
+      claimedAt: data['claimedAt'] is Timestamp
+          ? (data['claimedAt'] as Timestamp).toDate()
+          : null,
     );
   }
 }
