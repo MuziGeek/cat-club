@@ -23,6 +23,7 @@ class UserModel with _$UserModel {
   const factory UserModel({
     required String id,
     String? email,
+    String? phone,
     String? displayName,
     String? avatarUrl,
 

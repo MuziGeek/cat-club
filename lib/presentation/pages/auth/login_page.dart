@@ -21,19 +21,26 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _codeController = TextEditingController();
   bool _obscurePassword = true;
+  bool _isPhoneLogin = false; // 切换登录方式
+  bool _codeSent = false;
+  String? _verificationId;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _phoneController.dispose();
+    _codeController.dispose();
     super.dispose();
   }
 
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final success = await ref.read(loginProvider.notifier).signInWithEmail(
+    final success = await ref.read(loginProvider.notifier).signInWithPassword(
           email: _emailController.text.trim(),
           password: _passwordController.text,
         );
@@ -45,14 +52,58 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     }
   }
 
-  Future<void> _handleGoogleLogin() async {
-    final success = await ref.read(loginProvider.notifier).signInWithGoogle();
+  Future<void> _handleSendPhoneCode() async {
+    final phone = _phoneController.text.trim();
+    if (phone.isEmpty || phone.length != 11) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请输入正确的11位手机号')),
+      );
+      return;
+    }
+
+    final result = await ref.read(loginProvider.notifier).sendPhoneOtp(phone);
+
+    if (!mounted) return;
+
+    if (result != null) {
+      setState(() {
+        _codeSent = true;
+        _verificationId = result.verificationId;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('验证码已发送')),
+      );
+    }
+  }
+
+  Future<void> _handlePhoneLogin() async {
+    if (_verificationId == null || _codeController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请输入验证码')),
+      );
+      return;
+    }
+
+    final success = await ref.read(loginProvider.notifier).signInWithPhoneOtp(
+          phone: _phoneController.text.trim(),
+          verificationId: _verificationId!,
+          code: _codeController.text.trim(),
+        );
 
     if (!mounted) return;
 
     if (success) {
       context.go(AppRoutes.petRoom);
     }
+  }
+
+  void _toggleLoginMethod() {
+    setState(() {
+      _isPhoneLogin = !_isPhoneLogin;
+      _codeSent = false;
+      _verificationId = null;
+      _codeController.clear();
+    });
   }
 
   String _getErrorMessage(Object error) {
@@ -131,73 +182,139 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 ),
                 const SizedBox(height: 48),
 
-                // 邮箱输入
-                AppTextField(
-                  controller: _emailController,
-                  label: '邮箱',
-                  hint: '请输入邮箱地址',
-                  keyboardType: TextInputType.emailAddress,
-                  prefixIcon: Icons.email_outlined,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return '请输入邮箱';
-                    }
-                    if (!value.contains('@')) {
-                      return '请输入有效的邮箱地址';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
+                // 根据登录方式显示不同的输入框
+                if (!_isPhoneLogin) ...[
+                  // 邮箱密码登录
+                  AppTextField(
+                    controller: _emailController,
+                    label: '邮箱',
+                    hint: '请输入邮箱地址',
+                    keyboardType: TextInputType.emailAddress,
+                    prefixIcon: Icons.email_outlined,
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return '请输入邮箱';
+                      }
+                      if (!value.contains('@')) {
+                        return '请输入有效的邮箱地址';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
 
-                // 密码输入
-                AppTextField(
-                  controller: _passwordController,
-                  label: '密码',
-                  hint: '请输入密码',
-                  obscureText: _obscurePassword,
-                  prefixIcon: Icons.lock_outlined,
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      _obscurePassword
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined,
-                      color: AppColors.textHint,
+                  // 密码输入
+                  AppTextField(
+                    controller: _passwordController,
+                    label: '密码',
+                    hint: '请输入密码',
+                    obscureText: _obscurePassword,
+                    prefixIcon: Icons.lock_outlined,
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
+                        color: AppColors.textHint,
+                      ),
+                      onPressed: () {
+                        setState(() => _obscurePassword = !_obscurePassword);
+                      },
                     ),
-                    onPressed: () {
-                      setState(() => _obscurePassword = !_obscurePassword);
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return '请输入密码';
+                      }
+                      if (value.length < 6) {
+                        return '密码至少6位';
+                      }
+                      return null;
                     },
                   ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return '请输入密码';
-                    }
-                    if (value.length < 6) {
-                      return '密码至少6位';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 12),
+                  const SizedBox(height: 12),
 
-                // 忘记密码
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: () {
-                      // TODO: 忘记密码
-                    },
-                    child: const Text('忘记密码？'),
+                  // 忘记密码
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () {
+                        // TODO: 忘记密码
+                      },
+                      child: const Text('忘记密码？'),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 24),
+                  const SizedBox(height: 24),
 
-                // 登录按钮
-                AppButton(
-                  text: '登录',
-                  onPressed: isLoading ? null : _handleLogin,
-                  isLoading: isLoading,
-                ),
+                  // 登录按钮
+                  AppButton(
+                    text: '登录',
+                    onPressed: isLoading ? null : _handleLogin,
+                    isLoading: isLoading,
+                  ),
+                ] else ...[
+                  // 手机验证码登录
+                  AppTextField(
+                    controller: _phoneController,
+                    label: '手机号',
+                    hint: '请输入11位手机号',
+                    keyboardType: TextInputType.phone,
+                    prefixIcon: Icons.phone_android,
+                    enabled: !_codeSent,
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return '请输入手机号';
+                      }
+                      if (value.length != 11) {
+                        return '请输入11位手机号';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  if (_codeSent) ...[
+                    // 验证码输入
+                    AppTextField(
+                      controller: _codeController,
+                      label: '验证码',
+                      hint: '请输入6位验证码',
+                      keyboardType: TextInputType.number,
+                      prefixIcon: Icons.security,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return '请输入验证码';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 24),
+
+                    // 登录按钮
+                    AppButton(
+                      text: '登录',
+                      onPressed: isLoading ? null : _handlePhoneLogin,
+                      isLoading: isLoading,
+                    ),
+                    const SizedBox(height: 12),
+
+                    // 重新发送
+                    Center(
+                      child: TextButton(
+                        onPressed: isLoading ? null : _handleSendPhoneCode,
+                        child: const Text('重新发送验证码'),
+                      ),
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 24),
+
+                    // 发送验证码按钮
+                    AppButton(
+                      text: '发送验证码',
+                      onPressed: isLoading ? null : _handleSendPhoneCode,
+                      isLoading: isLoading,
+                    ),
+                  ],
+                ],
                 const SizedBox(height: 16),
 
                 // 分割线
@@ -216,11 +333,11 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 ),
                 const SizedBox(height: 16),
 
-                // 社交登录按钮
+                // 切换登录方式按钮
                 OutlinedButton.icon(
-                  onPressed: isLoading ? null : _handleGoogleLogin,
-                  icon: const Icon(Icons.g_mobiledata),
-                  label: const Text('使用 Google 账号登录'),
+                  onPressed: isLoading ? null : _toggleLoginMethod,
+                  icon: Icon(_isPhoneLogin ? Icons.email_outlined : Icons.phone_android),
+                  label: Text(_isPhoneLogin ? '使用邮箱密码登录' : '使用手机验证码登录'),
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),

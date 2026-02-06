@@ -1,11 +1,12 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../data/models/item_definitions.dart';
+import 'cloudbase_service.dart';
 
 /// 签到服务 Provider
 final checkInServiceProvider = Provider<CheckInService>((ref) {
-  return CheckInService();
+  final cloudbaseService = ref.watch(cloudbaseServiceProvider);
+  return CheckInService(cloudbaseService);
 });
 
 /// 签到奖励配置
@@ -50,9 +51,11 @@ class CheckInResult {
   }
 }
 
-/// 每日签到服务
+/// 每日签到服务 (CloudBase 版本)
 class CheckInService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final CloudbaseService _cloudbaseService;
+
+  CheckInService(this._cloudbaseService);
 
   /// 签到奖励配置（按连续天数）
   static const Map<int, CheckInReward> _rewardConfig = {
@@ -84,21 +87,20 @@ class CheckInService {
 
   /// 执行签到
   Future<CheckInResult> checkIn(String userId) async {
-    print('[CHECK_IN_SERVICE] 开始签到, userId=$userId');
-    final userRef = _firestore.collection('users').doc(userId);
+    debugPrint('[CHECK_IN_SERVICE] 开始签到, userId=$userId');
 
-    return _firestore.runTransaction<CheckInResult>((transaction) async {
-      final doc = await transaction.get(userRef);
-      if (!doc.exists) {
-        print('[CHECK_IN_SERVICE] 用户不存在');
+    try {
+      // 获取用户数据
+      final user = await _cloudbaseService.getUser(userId);
+      if (user == null) {
+        debugPrint('[CHECK_IN_SERVICE] 用户不存在');
         return CheckInResult.failure('用户不存在');
       }
 
-      final data = doc.data()!;
-      final lastSignInDate = _parseDate(data['lastSignInDate']);
-      final currentDays = data['consecutiveDays'] as int? ?? 0;
-      final currentCoins = data['coins'] as int? ?? 0;
-      print('[CHECK_IN_SERVICE] 当前状态: consecutiveDays=$currentDays, coins=$currentCoins');
+      final lastSignInDate = user.lastSignInDate;
+      final currentDays = user.consecutiveDays;
+      final currentCoins = user.coins;
+      debugPrint('[CHECK_IN_SERVICE] 当前状态: consecutiveDays=$currentDays, coins=$currentCoins');
 
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
@@ -121,27 +123,30 @@ class CheckInService {
 
         final newDays = isConsecutive ? currentDays + 1 : 1;
         final reward = getRewardForDay(newDays);
-        print('[CHECK_IN_SERVICE] 计算奖励: newDays=$newDays, reward.coins=${reward.coins}');
+        debugPrint('[CHECK_IN_SERVICE] 计算奖励: newDays=$newDays, reward.coins=${reward.coins}');
 
         // 更新签到数据
         final updates = <String, dynamic>{
-          'lastSignInDate': Timestamp.fromDate(now),
+          'lastSignInDate': now.toIso8601String(),
           'consecutiveDays': newDays,
-          'coins': FieldValue.increment(reward.coins),
         };
 
-        if (reward.diamonds > 0) {
-          updates['diamonds'] = FieldValue.increment(reward.diamonds);
-        }
+        debugPrint('[CHECK_IN_SERVICE] 正在更新 CloudBase: $updates');
+        await _cloudbaseService.updateUser(userId, updates);
+
+        // 更新货币
+        await _cloudbaseService.updateUserCurrency(
+          userId,
+          coins: reward.coins,
+          diamonds: reward.diamonds > 0 ? reward.diamonds : null,
+        );
 
         // 添加道具奖励
         for (final entry in reward.items.entries) {
-          updates['inventory.${entry.key}'] = FieldValue.increment(entry.value);
+          await _cloudbaseService.addInventoryItem(userId, entry.key, entry.value);
         }
 
-        print('[CHECK_IN_SERVICE] 正在更新 Firestore: $updates');
-        transaction.update(userRef, updates);
-        print('[CHECK_IN_SERVICE] Firestore 更新完成');
+        debugPrint('[CHECK_IN_SERVICE] CloudBase 更新完成');
 
         return CheckInResult(
           success: true,
@@ -152,11 +157,12 @@ class CheckInService {
         // 首次签到
         const reward = CheckInReward(coins: 100, description: '首次签到奖励');
 
-        transaction.update(userRef, {
-          'lastSignInDate': Timestamp.fromDate(now),
+        await _cloudbaseService.updateUser(userId, {
+          'lastSignInDate': now.toIso8601String(),
           'consecutiveDays': 1,
-          'coins': FieldValue.increment(reward.coins),
         });
+
+        await _cloudbaseService.updateUserCurrency(userId, coins: reward.coins);
 
         return const CheckInResult(
           success: true,
@@ -164,16 +170,18 @@ class CheckInService {
           reward: reward,
         );
       }
-    });
+    } catch (e) {
+      debugPrint('[CHECK_IN_SERVICE] 签到失败: $e');
+      return CheckInResult.failure('签到失败: $e');
+    }
   }
 
   /// 检查今日是否已签到
   Future<bool> hasCheckedInToday(String userId) async {
-    final doc = await _firestore.collection('users').doc(userId).get();
-    if (!doc.exists) return false;
+    final user = await _cloudbaseService.getUser(userId);
+    if (user == null) return false;
 
-    final data = doc.data()!;
-    final lastSignInDate = _parseDate(data['lastSignInDate']);
+    final lastSignInDate = user.lastSignInDate;
     if (lastSignInDate == null) return false;
 
     final now = DateTime.now();
@@ -184,28 +192,16 @@ class CheckInService {
 
   /// 获取当前连续签到天数
   Future<int> getConsecutiveDays(String userId) async {
-    final doc = await _firestore.collection('users').doc(userId).get();
-    if (!doc.exists) return 0;
-
-    final data = doc.data()!;
-    return data['consecutiveDays'] as int? ?? 0;
+    final user = await _cloudbaseService.getUser(userId);
+    if (user == null) return 0;
+    return user.consecutiveDays;
   }
 
   /// [调试用] 重置签到状态
   Future<void> resetCheckIn(String userId) async {
-    await _firestore.collection('users').doc(userId).update({
+    await _cloudbaseService.updateUser(userId, {
       'lastSignInDate': null,
       'consecutiveDays': 0,
     });
-  }
-
-  /// 解析日期
-  DateTime? _parseDate(dynamic value) {
-    if (value is Timestamp) {
-      return value.toDate();
-    } else if (value is String) {
-      return DateTime.tryParse(value);
-    }
-    return null;
   }
 }

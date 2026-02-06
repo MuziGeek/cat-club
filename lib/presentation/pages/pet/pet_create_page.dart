@@ -57,8 +57,7 @@ class _PetCreatePageState extends ConsumerState<PetCreatePage> {
     if (_hasCheckedLimit) return;
     _hasCheckedLimit = true;
 
-    final authState = ref.read(authStateProvider);
-    final userId = authState.valueOrNull?.uid;
+    final userId = ref.read(currentUserIdProvider);
 
     if (userId != null) {
       final (canCreate, currentCount, maxCount) =

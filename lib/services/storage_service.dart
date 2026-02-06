@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -54,12 +55,18 @@ class StorageService {
         CosConfig.secretKey,
       );
 
+      // 创建服务配置
+      final serviceConfig = CosXmlServiceConfig(
+        region: CosConfig.region,
+        isDebuggable: true,
+      );
+
       // 注册默认服务
-      await Cos().registerDefaultService(CosConfig.region);
+      await Cos().registerDefaultService(serviceConfig);
 
       // 注册 TransferManager
-      final config = TransferConfig();
-      await Cos().registerDefaultTransferManger(CosConfig.region, config);
+      final transferConfig = TransferConfig();
+      await Cos().registerDefaultTransferManger(serviceConfig, transferConfig);
 
       _transferManager = Cos().getDefaultTransferManger();
       _isInitialized = true;
@@ -236,19 +243,36 @@ class StorageService {
       final finalFileName = fileName ?? _uuid.v4();
       final cosKey = '$folder/$finalFileName$validExtension';
 
+      // 使用 Completer 处理异步上传结果
+      final completer = Completer<String?>();
+      bool isCompleted = false;
+
+      // 创建 ResultListener
+      final resultListener = ResultListener(
+        (Map<String?, String?>? header, CosXmlResult? result) {
+          // successCallBack
+          if (isCompleted) return;
+          isCompleted = true;
+          debugPrint('COS 上传成功: $cosKey');
+          final downloadUrl = '${CosConfig.endpoint}/$cosKey';
+          debugPrint('COS 上传完成，URL: $downloadUrl');
+          completer.complete(downloadUrl);
+        },
+        (CosXmlClientException? clientException, CosXmlServiceException? serviceException) {
+          // failCallBack
+          if (isCompleted) return;
+          isCompleted = true;
+          debugPrint('COS 上传失败: $clientException, $serviceException');
+          completer.complete(null);
+        },
+      );
+
       // 执行上传
-      final uploadTask = await _transferManager!.upload(
+      await _transferManager!.upload(
         CosConfig.bucket,
         cosKey,
         filePath: imageFile.path,
-        resultListener: ResultListener(
-          successCallBack: (result) {
-            debugPrint('COS 上传成功: $cosKey');
-          },
-          failCallBack: (clientException, serviceException) {
-            debugPrint('COS 上传失败: $clientException, $serviceException');
-          },
-        ),
+        resultListener: resultListener,
         stateCallback: (state) {
           debugPrint('COS 上传状态: $state');
         },
@@ -260,16 +284,7 @@ class StorageService {
       );
 
       // 等待上传完成
-      final result = await uploadTask.getResult();
-
-      if (result != null) {
-        // 返回完整的 COS 访问 URL
-        final downloadUrl = '${CosConfig.endpoint}/$cosKey';
-        debugPrint('COS 上传完成，URL: $downloadUrl');
-        return downloadUrl;
-      }
-
-      return null;
+      return await completer.future;
     } catch (e) {
       debugPrint('上传图片失败: $e');
       return null;

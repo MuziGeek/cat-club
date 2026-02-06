@@ -363,8 +363,7 @@ class PetSelector extends ConsumerWidget {
     final confirmed = await ReleaseConfirmDialog.show(context, pet);
 
     if (confirmed && context.mounted) {
-      final authState = ref.read(authStateProvider);
-      final userId = authState.valueOrNull?.uid;
+      final userId = ref.read(currentUserIdProvider);
 
       if (userId != null) {
         // 显示加载提示

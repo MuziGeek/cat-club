@@ -1,10 +1,9 @@
-plugins {
-    // Add the dependency for the Google services Gradle plugin
-    id("com.google.gms.google-services") version "4.3.15" apply false
-}
-
 allprojects {
     repositories {
+        // 阿里云镜像 - 国内加速
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
         google()
         mavenCentral()
     }

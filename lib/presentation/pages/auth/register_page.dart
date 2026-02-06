@@ -21,19 +21,43 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _confirmPasswordController = TextEditingController();
-  bool _obscurePassword = true;
-  bool _obscureConfirmPassword = true;
+  final _codeController = TextEditingController();
   bool _agreeToTerms = false;
+  bool _codeSent = false;
+  String? _verificationId;
 
   @override
   void dispose() {
     _nameController.dispose();
     _emailController.dispose();
-    _passwordController.dispose();
-    _confirmPasswordController.dispose();
+    _codeController.dispose();
     super.dispose();
+  }
+
+  /// 发送验证码
+  Future<void> _handleSendCode() async {
+    // 验证邮箱
+    final email = _emailController.text.trim();
+    if (email.isEmpty || !email.contains('@')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请输入有效的邮箱地址')),
+      );
+      return;
+    }
+
+    final result = await ref.read(registerProvider.notifier).sendEmailOtp(email);
+
+    if (!mounted) return;
+
+    if (result != null) {
+      setState(() {
+        _codeSent = true;
+        _verificationId = result.verificationId;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('验证码已发送，请查收邮件')),
+      );
+    }
   }
 
   Future<void> _handleRegister() async {
@@ -46,9 +70,17 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
       return;
     }
 
-    final success = await ref.read(registerProvider.notifier).registerWithEmail(
+    if (!_codeSent || _verificationId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先获取验证码')),
+      );
+      return;
+    }
+
+    final success = await ref.read(registerProvider.notifier).registerWithEmailOtp(
           email: _emailController.text.trim(),
-          password: _passwordController.text,
+          code: _codeController.text.trim(),
+          verificationId: _verificationId!,
           displayName: _nameController.text.trim(),
         );
 
@@ -155,64 +187,50 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                 ),
                 const SizedBox(height: 16),
 
-                // 密码输入
-                AppTextField(
-                  controller: _passwordController,
-                  label: '密码',
-                  hint: '请设置密码（至少6位）',
-                  obscureText: _obscurePassword,
-                  prefixIcon: Icons.lock_outlined,
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      _obscurePassword
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined,
-                      color: AppColors.textHint,
+                // 验证码输入
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: AppTextField(
+                        controller: _codeController,
+                        label: '验证码',
+                        hint: '请输入邮箱验证码',
+                        keyboardType: TextInputType.number,
+                        prefixIcon: Icons.security_outlined,
+                        enabled: _codeSent,
+                        validator: (value) {
+                          if (!_codeSent) return null;
+                          if (value == null || value.isEmpty) {
+                            return '请输入验证码';
+                          }
+                          if (value.length < 4) {
+                            return '验证码格式错误';
+                          }
+                          return null;
+                        },
+                      ),
                     ),
-                    onPressed: () {
-                      setState(() => _obscurePassword = !_obscurePassword);
-                    },
-                  ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return '请输入密码';
-                    }
-                    if (value.length < 6) {
-                      return '密码至少6位';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                // 确认密码
-                AppTextField(
-                  controller: _confirmPasswordController,
-                  label: '确认密码',
-                  hint: '请再次输入密码',
-                  obscureText: _obscureConfirmPassword,
-                  prefixIcon: Icons.lock_outlined,
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      _obscureConfirmPassword
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined,
-                      color: AppColors.textHint,
+                    const SizedBox(width: 12),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: SizedBox(
+                        width: 120,
+                        height: 52,
+                        child: ElevatedButton(
+                          onPressed: isLoading ? null : _handleSendCode,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text(_codeSent ? '重新发送' : '获取验证码'),
+                        ),
+                      ),
                     ),
-                    onPressed: () {
-                      setState(() =>
-                          _obscureConfirmPassword = !_obscureConfirmPassword);
-                    },
-                  ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return '请确认密码';
-                    }
-                    if (value != _passwordController.text) {
-                      return '两次密码输入不一致';
-                    }
-                    return null;
-                  },
+                  ],
                 ),
                 const SizedBox(height: 24),
 

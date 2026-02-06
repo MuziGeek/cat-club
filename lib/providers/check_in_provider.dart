@@ -131,8 +131,7 @@ class CheckInNotifier extends StateNotifier<CheckInState> {
 
   /// 获取当前用户 ID
   String? _getUserId() {
-    final authState = _ref.read(authStateProvider);
-    return authState.valueOrNull?.uid;
+    return _ref.read(currentUserIdProvider);
   }
 }
 

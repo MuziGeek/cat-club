@@ -1,11 +1,11 @@
 import 'dart:async';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../providers/auth_provider.dart';
+import '../../services/cloudbase_auth_http_service.dart';
 import '../pages/auth/login_page.dart';
 import '../pages/auth/register_page.dart';
 import '../pages/auth/splash_page.dart';
@@ -46,11 +46,11 @@ const _authWhitelist = [
 
 /// GoRouter 刷新流 - 监听认证状态变化
 class GoRouterRefreshStream extends ChangeNotifier {
-  GoRouterRefreshStream(Stream<User?> stream) {
+  GoRouterRefreshStream(Stream<CloudbaseAuthState?> stream) {
     _subscription = stream.listen((_) => notifyListeners());
   }
 
-  late final StreamSubscription<User?> _subscription;
+  late final StreamSubscription<CloudbaseAuthState?> _subscription;
 
   @override
   void dispose() {
@@ -71,15 +71,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 
     // 路由重定向逻辑
     redirect: (context, state) {
-      final authStatus = ref.read(authStatusProvider);
+      final authService = ref.read(authServiceProvider);
       final currentPath = state.matchedLocation;
 
-      // 初始化中，停留在 splash
-      if (authStatus == AuthStatus.initial) {
-        return currentPath == AppRoutes.splash ? null : AppRoutes.splash;
-      }
-
-      final isAuthenticated = authStatus == AuthStatus.authenticated;
+      // 使用同步方式检查登录状态，不依赖流状态
+      final isAuthenticated = authService.isSignedIn;
       final isAuthPage = _authWhitelist.contains(currentPath);
 
       // 未登录用户访问需要认证的页面 -> 重定向到登录页

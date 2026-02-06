@@ -47,9 +47,13 @@ class _SplashPageState extends ConsumerState<SplashPage>
 
     if (!mounted) return;
 
-    // 根据认证状态跳转
-    final authStatus = ref.read(authStatusProvider);
-    if (authStatus == AuthStatus.authenticated) {
+    // 直接从认证服务获取当前状态（同步检查）
+    final authService = ref.read(authServiceProvider);
+    final isSignedIn = authService.isSignedIn;
+
+    debugPrint('[Splash] isSignedIn: $isSignedIn');
+
+    if (isSignedIn) {
       context.go(AppRoutes.petRoom);
     } else {
       context.go(AppRoutes.login);
