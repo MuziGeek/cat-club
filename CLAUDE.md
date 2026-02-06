@@ -6,8 +6,91 @@
 
 | 时间 | 版本 | 变更内容 |
 |------|------|----------|
+| 2026-02-06 | 1.3.0 | 完成 CloudbaseService 架构重构，添加 SOLID/DRY 强制规范 |
+| 2026-02-06 | 1.2.0 | 统一使用 MySQL 关系型数据库，删除 NoSQL 空集合 |
 | 2026-02-04 | 1.1.0 | 添加腾讯云 CloudBase 迁移文档 |
 | 2026-01-29 09:45:35 | 1.0.0 | 初始化项目文档结构 |
+
+---
+
+## 🚨 强制架构规范 (MANDATORY)
+
+> **⚠️ 所有功能实现必须严格遵守以下原则，违反将导致代码审查不通过**
+
+### SOLID 原则 (强制)
+
+| 原则 | 要求 | 违规示例 |
+|------|------|----------|
+| **S - 单一职责** | 每个类/文件只负责一件事 | ❌ 一个 Service 包含 CRUD + 认证 + 缓存 |
+| **O - 开闭原则** | 对扩展开放，对修改关闭 | ❌ 修改现有类添加新功能而非扩展 |
+| **L - 里氏替换** | 子类可替换父类 | ❌ 子类重写方法改变行为契约 |
+| **I - 接口隔离** | 接口应小而专一 | ❌ 一个接口包含 20+ 方法 |
+| **D - 依赖倒置** | 依赖抽象而非具体实现 | ❌ 直接 `new` 具体类而非注入接口 |
+
+### DRY 原则 (强制)
+
+| 规则 | 要求 |
+|------|------|
+| **禁止重复代码** | 相同逻辑出现 2 次以上必须抽取 |
+| **统一工具类** | 使用 `lib/core/utils/` 下的工具类 |
+| **统一类型转换** | 使用 `TypeConverters` 而非内联解析 |
+| **统一异常处理** | 使用 `CloudbaseException` 体系 |
+
+### 代码分层规范 (强制)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Presentation Layer (lib/presentation/, lib/providers/)     │
+│  • 只处理 UI 和用户交互                                      │
+│  • 禁止直接调用 HTTP/数据库                                  │
+├─────────────────────────────────────────────────────────────┤
+│  Domain Layer (lib/domain/)                                  │
+│  • 定义 Repository 接口                                      │
+│  • 定义业务实体和用例                                        │
+├─────────────────────────────────────────────────────────────┤
+│  Data Layer (lib/data/)                                      │
+│  • 实现 Repository 接口                                      │
+│  • 数据映射 (Mapper)                                         │
+│  • 数据源封装 (DataSource)                                   │
+├─────────────────────────────────────────────────────────────┤
+│  Services Layer (lib/services/)                              │
+│  • Facade 模式统一入口                                       │
+│  • 委托给 Repository 实现                                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 新增功能检查清单
+
+添加新功能前，必须确认：
+
+- [ ] 是否复用了现有的 `TypeConverters`？
+- [ ] 是否使用了 `Result<T>` 模式处理错误？
+- [ ] 是否通过接口注入依赖？
+- [ ] 是否有重复代码可以抽取？
+- [ ] 单个文件是否超过 400 行？（超过需拆分）
+- [ ] 单个方法是否超过 50 行？（超过需拆分）
+
+### 现有架构组件 (必须复用)
+
+| 组件 | 路径 | 用途 |
+|------|------|------|
+| `TypeConverters` | `lib/core/utils/type_converters.dart` | MySQL 类型转换 |
+| `CloudbaseException` | `lib/core/exceptions/cloudbase_exception.dart` | 异常体系 |
+| `Result<T>` | `lib/core/exceptions/cloudbase_exception.dart` | 成功/失败处理 |
+| `CloudbaseRestClient` | `lib/data/datasources/cloudbase_rest_client.dart` | HTTP 请求 |
+| `UserMapper` | `lib/data/mappers/user_mapper.dart` | 用户数据转换 |
+| `PetMapper` | `lib/data/mappers/pet_mapper.dart` | 宠物数据转换 |
+| `AchievementMapper` | `lib/data/mappers/achievement_mapper.dart` | 成就数据转换 |
+
+### 添加新实体的标准流程
+
+```
+1. 创建 Mapper: lib/data/mappers/{entity}_mapper.dart
+2. 定义接口: lib/domain/repositories/{entity}_repository.dart
+3. 实现接口: lib/data/repositories/{entity}_repository_impl.dart
+4. 注册 Provider: lib/services/cloudbase_service.dart
+5. (可选) 扩展 Facade 方法
+```
 
 ---
 
@@ -266,7 +349,7 @@ apiBaseUrl: 'https://cat-hub-6gcp6yje9dd382c7.api.tcloudbasegateway.com'
 | 功能模块 | Firebase (原) | CloudBase (新) | 迁移状态 |
 |----------|---------------|----------------|----------|
 | **认证服务** | Firebase Auth | CloudBase HTTP API Auth | ✅ 已完成 |
-| **数据库** | Firestore | CloudBase 文档数据库 | ✅ 已完成 |
+| **数据库** | Firestore | CloudBase MySQL (关系型) | ✅ 已完成 |
 | **存储服务** | Firebase Storage | 腾讯云 COS | ✅ 已完成 |
 | **云函数** | Cloud Functions | CloudBase 云函数 | 📋 待迁移 |
 | **推送通知** | FCM | 待定 | 📋 待迁移 |
@@ -306,9 +389,11 @@ final state = await authService.signInWithPassword(
 );
 ```
 
-#### 2. 数据库服务 (SDK 方式)
+#### 2. 数据库服务 (MySQL REST API)
 
 **文件**: `lib/services/cloudbase_service.dart`
+
+**API 端点**: `/v1/rdb/rest/{table}`
 
 **支持的操作**:
 - ✅ 用户 CRUD
@@ -316,12 +401,29 @@ final state = await authService.signInWithPassword(
 - ✅ 背包道具管理
 - ✅ 成就进度
 - ✅ 用户统计
-- ✅ 实时数据流 (watch)
 
-**数据集合**:
-- `users` - 用户信息
-- `pets` - 宠物信息
-- `user_stats` - 用户统计
+**MySQL 表结构**:
+
+| 表名 | 主要字段 | 用途 |
+|------|----------|------|
+| `users` | id, _openid, email, phone, displayName, coins, diamonds, inventory(JSON) | 用户信息 |
+| `pets` | id, _openid, userId, name, species, status(JSON), stats(JSON) | 宠物信息 |
+| `user_achievements` | id, _openid, userId, achievementId, currentValue, isUnlocked | 成就进度 |
+| `user_stats` | id, _openid, userId, feedCount, petCount, cleanCount, playCount | 用户统计 |
+
+**REST API 操作**:
+
+| 操作 | 方法 | 端点示例 |
+|------|------|----------|
+| 查询 | GET | `/v1/rdb/rest/users?id=eq.{id}` |
+| 创建 | POST | `/v1/rdb/rest/users` |
+| 更新 | PATCH | `/v1/rdb/rest/users?id=eq.{id}` |
+| 删除 | DELETE | `/v1/rdb/rest/users?id=eq.{id}` |
+
+**`_openid` 列说明**:
+- 每个表都有 `_openid` 列用于权限控制
+- 系统自动填充当前登录用户的 openid
+- 查询时自动过滤，只返回当前用户的数据
 
 #### 3. 存储服务 (腾讯云 COS)
 
@@ -388,12 +490,14 @@ final response = await http.post(
 # 查询环境信息
 mcporter call cloudbase.envQuery
 
-# 数据库操作
-mcporter call cloudbase.readNoSqlDatabaseContent collection=users
+# MySQL 数据库查询
+mcporter call cloudbase.executeReadOnlySQL sql="SELECT * FROM users"
 
 # 云函数管理
 mcporter call cloudbase.getFunctionList
 ```
+
+> ⚠️ **注意**: NoSQL 文档数据库集合已废弃并删除，请使用 MySQL 关系型数据库。
 
 ### 认证 API 端点参考
 

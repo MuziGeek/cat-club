@@ -6,8 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../providers/auth_provider.dart';
 import '../../services/cloudbase_auth_http_service.dart';
-import '../pages/auth/login_page.dart';
-import '../pages/auth/register_page.dart';
+import '../pages/auth/auth_page.dart';
 import '../pages/auth/splash_page.dart';
 import '../pages/community/community_page.dart';
 import '../pages/home/pet_room_page.dart';
@@ -23,8 +22,7 @@ class AppRoutes {
   AppRoutes._();
 
   static const String splash = '/';
-  static const String login = '/login';
-  static const String register = '/register';
+  static const String auth = '/auth';
   static const String petRoom = '/pet-room';
   static const String petCreate = '/pet-create';
   static const String petDetail = '/pet/:id';
@@ -35,13 +33,18 @@ class AppRoutes {
   static const String profile = '/profile';
   static const String settings = '/settings';
   static const String memorial = '/memorial/:id';
+
+  // 兼容性别名（逐步废弃）
+  @Deprecated('使用 auth 替代')
+  static const String login = '/auth';
+  @Deprecated('使用 auth 替代')
+  static const String register = '/auth';
 }
 
 /// 认证页面白名单（无需登录即可访问）
 const _authWhitelist = [
   AppRoutes.splash,
-  AppRoutes.login,
-  AppRoutes.register,
+  AppRoutes.auth,
 ];
 
 /// GoRouter 刷新流 - 监听认证状态变化
@@ -78,9 +81,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final isAuthenticated = authService.isSignedIn;
       final isAuthPage = _authWhitelist.contains(currentPath);
 
-      // 未登录用户访问需要认证的页面 -> 重定向到登录页
+      // 未登录用户访问需要认证的页面 -> 重定向到认证页
       if (!isAuthenticated && !isAuthPage) {
-        return AppRoutes.login;
+        return AppRoutes.auth;
       }
 
       // 已登录用户访问认证页面（非 splash）-> 重定向到主页
@@ -103,16 +106,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const SplashPage(),
       ),
 
-      // 登录页
+      // 统一认证页（登录/注册一体化）
       GoRoute(
-        path: AppRoutes.login,
-        builder: (context, state) => const LoginPage(),
-      ),
-
-      // 注册页
-      GoRoute(
-        path: AppRoutes.register,
-        builder: (context, state) => const RegisterPage(),
+        path: AppRoutes.auth,
+        builder: (context, state) => const AuthPage(),
       ),
 
       // 主页面 Shell（底部导航）

@@ -6,10 +6,11 @@
 
 封装外部服务和复杂业务逻辑，包括：
 
-- **认证服务**：Firebase Auth 封装
+- **认证服务**：CloudBase HTTP API Auth（主要）/ Firebase Auth（备用）
+- **数据库服务**：CloudBase MySQL REST API
+- **存储服务**：腾讯云 COS
 - **AI 生成服务**：Replicate API 调用（待实现）
 - **通知服务**：推送通知（待实现）
-- **分享服务**：社交分享（待实现）
 
 ---
 
@@ -23,32 +24,112 @@
 
 ```
 lib/services/
-├── auth_service.dart           # 认证服务（已实现）
-├── ai_generation_service.dart  # AI 生成服务（待完善）
-├── notification_service.dart   # [待实现]
-├── analytics_service.dart      # [待实现]
-└── share_service.dart          # [待实现]
+├── cloudbase_auth_http_service.dart  # CloudBase HTTP API 认证 ✅
+├── cloudbase_service.dart            # CloudBase MySQL REST API ✅
+├── storage_service.dart              # 腾讯云 COS 存储服务 ✅
+├── auth_service.dart                 # Firebase Auth（备用）
+├── firestore_service.dart            # Firestore（已废弃）
+├── check_in_service.dart             # 签到服务
+├── ai_generation_service.dart        # AI 生成服务（待完善）
+└── share_service.dart                # [待实现]
 ```
 
 ---
 
-## 服务详情
+## CloudBase 服务详情
 
-### AuthService - 认证服务
+### CloudbaseAuthHttpService - 认证服务 (推荐)
 
-封装 Firebase Auth 操作：
+**文件**: `cloudbase_auth_http_service.dart`
+
+使用 CloudBase HTTP API 进行认证：
+
+```dart
+class CloudbaseAuthHttpService {
+  // 发送验证码
+  Future<OtpResult> sendPhoneOtp(String phone);
+  Future<OtpResult> sendEmailOtp(String email);
+
+  // 验证码验证
+  Future<String> verifyOtp({required String verificationId, required String code});
+
+  // 登录方式
+  Future<AuthState> signInWithVerificationToken(String token);
+  Future<AuthState> signInWithPassword({String? email, String? phone, required String password});
+  Future<AuthState> signInAnonymously();
+
+  // Token 管理
+  Future<AuthState> refreshToken();
+  Future<void> signOut();
+}
+```
+
+### CloudbaseService - 数据库服务
+
+**文件**: `cloudbase_service.dart`
+
+使用 CloudBase MySQL REST API：
+
+```dart
+class CloudbaseService {
+  // 用户操作
+  Future<Map<String, dynamic>?> getUser(String id);
+  Future<void> createUser(Map<String, dynamic> data);
+  Future<void> updateUser(String id, Map<String, dynamic> data);
+
+  // 宠物操作
+  Future<List<Map<String, dynamic>>> getUserPets(String userId);
+  Future<void> createPet(Map<String, dynamic> data);
+  Future<void> updatePet(String id, Map<String, dynamic> data);
+
+  // 成就和统计
+  Future<List<Map<String, dynamic>>> getUserAchievements(String userId);
+  Future<Map<String, dynamic>?> getUserStats(String userId);
+}
+```
+
+**REST API 端点**: `/v1/rdb/rest/{table}`
+
+**MySQL 表结构**:
+
+| 表名 | 用途 |
+|------|------|
+| `users` | 用户信息（coins, diamonds, inventory 等）|
+| `pets` | 宠物信息（status, stats 为 JSON 字段）|
+| `user_achievements` | 成就进度 |
+| `user_stats` | 用户统计（喂食、清洁、玩耍次数等）|
+
+### StorageService - 存储服务
+
+**文件**: `storage_service.dart`
+
+使用腾讯云 COS：
+
+```dart
+class StorageService {
+  Future<File?> pickImage(ImageSource source);
+  Future<File?> cropImage(File imageFile);
+  Future<String> uploadImage(File file, String path);
+  Future<void> deleteImage(String url);
+}
+```
+
+---
+
+## Firebase 服务（备用/待迁移）
+
+### AuthService - Firebase 认证
+
+**文件**: `auth_service.dart`
+
+> ⚠️ 建议使用 `CloudbaseAuthHttpService` 替代
 
 ```dart
 class AuthService {
   User? get currentUser;
   Stream<User?> get authStateChanges;
-
-  Future<UserCredential> registerWithEmail({...});
   Future<UserCredential> signInWithEmail({...});
-  Future<void> sendPasswordResetEmail(String email);
   Future<void> signOut();
-  Future<void> deleteAccount();
-  Future<void> updateProfile({...});
 }
 ```
 
@@ -65,14 +146,8 @@ class AiGenerationService {
   };
 
   Future<List<String>> generateCartoonAvatars({...}); // 待实现
-  Future<PetFeatures> extractFeatures(String imageUrl); // 待实现
 }
 ```
-
-**支持的风格**：
-- `cute` - Q版可爱风格
-- `anime` - 日系动漫风格
-- `realistic` - 半写实风格
 
 ---
 
@@ -80,18 +155,56 @@ class AiGenerationService {
 
 ### 外部依赖
 
-- `firebase_auth` - Firebase 认证
+- `http` - HTTP 请求（CloudBase REST API）
+- `firebase_auth` - Firebase 认证（备用）
 - `dio` - HTTP 请求（AI 服务使用）
+- `image_picker` - 图片选择
+- `image_cropper` - 图片裁剪
 
 ### 环境配置
 
-AI 服务需要配置 Replicate API Key（待实现）。
+```dart
+// lib/config/cloudbase_config.dart
+envId: 'cat-hub-6gcp6yje9dd382c7'
+apiBaseUrl: 'https://cat-hub-6gcp6yje9dd382c7.api.tcloudbasegateway.com'
+```
 
 ---
 
 ## 对外接口
 
-### 认证服务使用
+### CloudBase 认证服务使用（推荐）
+
+```dart
+// 通过 Provider 获取
+final authService = ref.watch(cloudbaseAuthHttpServiceProvider);
+
+// 手机验证码登录
+final result = await authService.sendPhoneOtp('13800138000');
+final token = await authService.verifyOtp(
+  verificationId: result.verificationId,
+  code: '123456',
+);
+await authService.signInWithVerificationToken(token);
+
+// 登出
+await authService.signOut();
+```
+
+### CloudBase 数据库服务使用
+
+```dart
+// 通过 Provider 获取
+final dbService = ref.watch(cloudbaseServiceProvider);
+
+// 查询用户
+final user = await dbService.getUser(userId);
+
+// 查询宠物列表
+final pets = await dbService.getUserPets(userId);
+```
+
+### Firebase 认证服务使用（备用）
 
 ```dart
 // 通过 Provider 获取
@@ -137,8 +250,12 @@ A: `signInWithEmail` 会抛出 `FirebaseAuthException`，在 Provider 层捕获�
 
 | 文件 | 用途 | 状态 |
 |------|------|------|
-| `auth_service.dart` | Firebase 认证封装 | 已实现 |
-| `ai_generation_service.dart` | AI 图像生成 | 待完善 |
+| `cloudbase_auth_http_service.dart` | CloudBase HTTP API 认证 | ✅ 已实现 |
+| `cloudbase_service.dart` | CloudBase MySQL REST API | ✅ 已实现 |
+| `storage_service.dart` | 腾讯云 COS 存储 | ✅ 已实现 |
+| `auth_service.dart` | Firebase 认证（备用）| ⚠️ 待迁移 |
+| `firestore_service.dart` | Firestore（已废弃）| ❌ 已废弃 |
+| `ai_generation_service.dart` | AI 图像生成 | 🔧 待完善 |
 
 ---
 
@@ -146,4 +263,5 @@ A: `signInWithEmail` 会抛出 `FirebaseAuthException`，在 Provider 层捕获�
 
 | 时间 | 变更内容 |
 |------|----------|
+| 2026-02-06 | 更新文档：统一使用 MySQL 关系型数据库，添加 CloudBase 服务说明 |
 | 2026-01-29 09:45:35 | 初始化模块文档 |
