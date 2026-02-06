@@ -171,7 +171,7 @@ class _AchievementPageState extends ConsumerState<AchievementPage>
 
   /// 领取成就奖励
   Future<void> _claimReward(String achievementId) async {
-    final userId = ref.read(authStateProvider).valueOrNull?.uid;
+    final userId = ref.read(currentUserIdProvider);
     if (userId == null) return;
 
     final success = await ref.read(achievementNotifierProvider.notifier).claimReward(

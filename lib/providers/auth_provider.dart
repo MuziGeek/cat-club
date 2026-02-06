@@ -1,16 +1,20 @@
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../services/auth_service.dart';
+import '../services/cloudbase_auth_http_service.dart';
 import 'user_provider.dart';
 
-/// AuthService Provider
-final authServiceProvider = Provider<AuthService>((ref) {
-  return AuthService();
+/// CloudBase 认证服务单例实例
+/// 确保整个应用使用同一个实例，避免登出时状态不同步
+final _authServiceInstance = CloudbaseAuthHttpService();
+
+/// CloudBase 认证服务 Provider (单例)
+final authServiceProvider = Provider<CloudbaseAuthHttpService>((ref) {
+  return _authServiceInstance;
 });
 
-/// 当前用户状态 Provider
-final authStateProvider = StreamProvider<User?>((ref) {
+/// 当前用户状态 Provider (CloudBase)
+final authStateProvider = StreamProvider<CloudbaseAuthState?>((ref) {
   final authService = ref.watch(authServiceProvider);
   return authService.authStateChanges;
 });
@@ -27,104 +31,146 @@ final authStatusProvider = Provider<AuthStatus>((ref) {
   final authState = ref.watch(authStateProvider);
 
   return authState.when(
-    data: (user) =>
-        user != null ? AuthStatus.authenticated : AuthStatus.unauthenticated,
+    data: (state) =>
+        state != null && state.isAuthenticated ? AuthStatus.authenticated : AuthStatus.unauthenticated,
     loading: () => AuthStatus.initial,
     error: (_, __) => AuthStatus.unauthenticated,
   );
 });
 
-/// 登录状态 Notifier
-class LoginNotifier extends StateNotifier<AsyncValue<void>> {
-  final AuthService _authService;
-
-  LoginNotifier(this._authService) : super(const AsyncValue.data(null));
-
-  /// 邮箱密码登录
-  Future<bool> signInWithEmail({
-    required String email,
-    required String password,
-  }) async {
-    state = const AsyncValue.loading();
-    try {
-      await _authService.signInWithEmail(
-        email: email,
-        password: password,
-      );
-      state = const AsyncValue.data(null);
-      return true;
-    } catch (e, st) {
-      state = AsyncValue.error(e, st);
-      return false;
-    }
-  }
-
-  /// Google 登录
-  Future<bool> signInWithGoogle() async {
-    state = const AsyncValue.loading();
-    try {
-      final credential = await _authService.signInWithGoogle();
-      if (credential == null) {
-        // 用户取消了登录
-        state = const AsyncValue.data(null);
-        return false;
-      }
-      state = const AsyncValue.data(null);
-      return true;
-    } catch (e, st) {
-      state = AsyncValue.error(e, st);
-      return false;
-    }
-  }
-
-  /// 重置状态
-  void reset() {
-    state = const AsyncValue.data(null);
-  }
-}
-
-/// 登录 Notifier Provider
-final loginProvider =
-    StateNotifierProvider<LoginNotifier, AsyncValue<void>>((ref) {
+/// 当前用户 ID Provider
+/// 优先使用同步方式获取，确保登录后立即可用
+final currentUserIdProvider = Provider<String?>((ref) {
+  // 直接从 authService 同步获取，不依赖流状态
   final authService = ref.watch(authServiceProvider);
-  return LoginNotifier(authService);
+  return authService.currentUserId;
 });
 
-/// 注册状态 Notifier
-class RegisterNotifier extends StateNotifier<AsyncValue<void>> {
-  final AuthService _authService;
+/// 统一认证 Notifier
+///
+/// 采用 OTP 验证码认证，自动处理登录/注册：
+/// - 新用户：自动创建用户文档
+/// - 老用户：直接登录
+class AuthNotifier extends StateNotifier<AsyncValue<void>> {
+  final CloudbaseAuthHttpService _authService;
   final Ref _ref;
 
-  RegisterNotifier(this._authService, this._ref) : super(const AsyncValue.data(null));
+  AuthNotifier(this._authService, this._ref) : super(const AsyncValue.data(null));
 
-  /// 邮箱密码注册
-  Future<bool> registerWithEmail({
-    required String email,
-    required String password,
+  /// 发送邮箱验证码
+  Future<VerificationResult?> sendEmailOtp(String email) async {
+    state = const AsyncValue.loading();
+    try {
+      final result = await _authService.sendEmailOtp(email);
+      state = const AsyncValue.data(null);
+      return result;
+    } catch (e, st) {
+      debugPrint('[AUTH] 发送邮箱验证码失败: $e');
+      state = AsyncValue.error(e, st);
+      return null;
+    }
+  }
+
+  /// 发送手机验证码
+  Future<VerificationResult?> sendPhoneOtp(String phone) async {
+    state = const AsyncValue.loading();
+    try {
+      final result = await _authService.sendPhoneOtp(phone);
+      state = const AsyncValue.data(null);
+      return result;
+    } catch (e, st) {
+      debugPrint('[AUTH] 发送手机验证码失败: $e');
+      state = AsyncValue.error(e, st);
+      return null;
+    }
+  }
+
+  /// 统一认证方法（自动判断登录/注册）
+  ///
+  /// OTP 验证通过后：
+  /// - 如果是新用户，自动创建用户文档
+  /// - 如果是老用户，直接完成登录
+  Future<bool> authenticateWithOtp({
+    String? email,
+    String? phone,
+    required String code,
+    required String verificationId,
     String? displayName,
   }) async {
     state = const AsyncValue.loading();
     try {
-      final credential = await _authService.registerWithEmail(
-        email: email,
-        password: password,
-        displayName: displayName,
-      );
-
-      // 创建用户文档
-      if (credential.user != null) {
-        await _ref.read(userNotifierProvider.notifier).createUserDocument(
-          userId: credential.user!.uid,
+      // 1. 验证 OTP 并登录
+      CloudbaseAuthState authState;
+      if (email != null) {
+        authState = await _authService.signInWithEmailOtp(
           email: email,
+          code: code,
+          verificationId: verificationId,
+        );
+      } else if (phone != null) {
+        authState = await _authService.signInWithPhoneOtp(
+          phone: phone,
+          code: code,
+          verificationId: verificationId,
+        );
+      } else {
+        throw ArgumentError('必须提供 email 或 phone');
+      }
+
+      // 2. 确保用户文档存在（CloudBase 会自动处理注册/登录）
+      if (authState.sub != null) {
+        await _ref.read(userNotifierProvider.notifier).createUserDocument(
+          userId: authState.sub!,
+          email: email,
+          phone: phone,
           displayName: displayName,
         );
       }
 
       state = const AsyncValue.data(null);
+      debugPrint('[AUTH] OTP 认证成功: uid=${authState.sub}');
       return true;
     } catch (e, st) {
+      debugPrint('[AUTH] OTP 认证失败: $e');
       state = AsyncValue.error(e, st);
       return false;
+    }
+  }
+
+  /// 匿名登录
+  Future<bool> signInAnonymously() async {
+    state = const AsyncValue.loading();
+    try {
+      final authState = await _authService.signInAnonymously();
+
+      // 为匿名用户创建文档
+      if (authState.sub != null) {
+        await _ref.read(userNotifierProvider.notifier).createUserDocument(
+          userId: authState.sub!,
+          displayName: '匿名用户',
+        );
+      }
+
+      state = const AsyncValue.data(null);
+      debugPrint('[AUTH] 匿名登录成功: uid=${authState.sub}');
+      return true;
+    } catch (e, st) {
+      debugPrint('[AUTH] 匿名登录失败: $e');
+      state = AsyncValue.error(e, st);
+      return false;
+    }
+  }
+
+  /// 登出
+  Future<void> signOut() async {
+    state = const AsyncValue.loading();
+    try {
+      await _authService.signOut();
+      state = const AsyncValue.data(null);
+      debugPrint('[AUTH] 登出成功');
+    } catch (e, st) {
+      debugPrint('[AUTH] 登出失败: $e');
+      state = AsyncValue.error(e, st);
     }
   }
 
@@ -134,9 +180,19 @@ class RegisterNotifier extends StateNotifier<AsyncValue<void>> {
   }
 }
 
-/// 注册 Notifier Provider
-final registerProvider =
-    StateNotifierProvider<RegisterNotifier, AsyncValue<void>>((ref) {
+/// 统一认证 Notifier Provider
+final authNotifierProvider =
+    StateNotifierProvider<AuthNotifier, AsyncValue<void>>((ref) {
   final authService = ref.watch(authServiceProvider);
-  return RegisterNotifier(authService, ref);
+  return AuthNotifier(authService, ref);
 });
+
+// ============================================================================
+// 以下为兼容性别名，逐步废弃
+// ============================================================================
+
+/// @deprecated 使用 authNotifierProvider 替代
+final loginProvider = authNotifierProvider;
+
+/// @deprecated 使用 authNotifierProvider 替代
+final registerProvider = authNotifierProvider;

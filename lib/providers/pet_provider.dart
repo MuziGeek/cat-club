@@ -6,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/utils/status_decay_calculator.dart';
 import '../data/models/achievement_model.dart';
 import '../data/models/pet_model.dart';
-import '../services/firestore_service.dart';
+import '../services/cloudbase_service.dart';
 import '../services/storage_service.dart';
 import 'achievement_provider.dart';
 import 'auth_provider.dart';
@@ -14,17 +14,11 @@ import 'user_provider.dart';
 
 /// 用户所有宠物流 Provider
 final userPetsProvider = StreamProvider<List<PetModel>>((ref) {
-  final authState = ref.watch(authStateProvider);
-  final firestoreService = ref.watch(firestoreServiceProvider);
+  final userId = ref.watch(currentUserIdProvider);
+  final cloudbaseService = ref.watch(cloudbaseServiceProvider);
 
-  return authState.when(
-    data: (user) {
-      if (user == null) return Stream.value([]);
-      return firestoreService.userPetsStream(user.uid);
-    },
-    loading: () => Stream.value([]),
-    error: (_, __) => Stream.value([]),
-  );
+  if (userId == null) return Stream.value([]);
+  return cloudbaseService.userPetsStream(userId);
 });
 
 /// 当前选中宠物 ID Provider
@@ -33,10 +27,10 @@ final selectedPetIdProvider = StateProvider<String?>((ref) => null);
 /// 当前选中宠物数据 Provider
 final selectedPetProvider = StreamProvider<PetModel?>((ref) {
   final petId = ref.watch(selectedPetIdProvider);
-  final firestoreService = ref.watch(firestoreServiceProvider);
+  final cloudbaseService = ref.watch(cloudbaseServiceProvider);
 
   if (petId == null) return Stream.value(null);
-  return firestoreService.petStream(petId);
+  return cloudbaseService.petStream(petId);
 });
 
 /// 宠物创建状态
@@ -66,10 +60,10 @@ class PetCreateState {
 
 /// 宠物创建 Notifier
 class PetCreateNotifier extends StateNotifier<PetCreateState> {
-  final FirestoreService _firestoreService;
+  final CloudbaseService _cloudbaseService;
   final Ref _ref;
 
-  PetCreateNotifier(this._firestoreService, this._ref)
+  PetCreateNotifier(this._cloudbaseService, this._ref)
       : super(const PetCreateState());
 
   /// 创建宠物
@@ -83,13 +77,12 @@ class PetCreateNotifier extends StateNotifier<PetCreateState> {
     state = state.copyWith(isLoading: true, error: null);
 
     try {
-      final authState = _ref.read(authStateProvider);
-      final userId = authState.valueOrNull?.uid;
+      final userId = _ref.read(currentUserIdProvider);
       if (userId == null) throw Exception('用户未登录');
 
       final now = DateTime.now();
       final pet = PetModel(
-        id: '', // 由 Firestore 生成
+        id: '', // 由 CloudBase 生成
         userId: userId,
         name: name,
         species: species,
@@ -104,10 +97,10 @@ class PetCreateNotifier extends StateNotifier<PetCreateState> {
       );
 
       // 创建宠物文档
-      final petId = await _firestoreService.createPet(pet);
+      final petId = await _cloudbaseService.createPet(pet);
 
       // 添加宠物到用户
-      await _firestoreService.addPetToUser(userId, petId);
+      await _cloudbaseService.addPetToUser(userId, petId);
 
       state = state.copyWith(isLoading: false, createdPetId: petId);
       return petId;
@@ -128,7 +121,7 @@ class PetCreateNotifier extends StateNotifier<PetCreateState> {
   ///
   /// 返回 (canCreate, currentCount, maxCount)
   Future<(bool, int, int)> canCreatePet(String userId) async {
-    final user = await _firestoreService.getUser(userId);
+    final user = await _cloudbaseService.getUser(userId);
     final maxPets = user?.maxPets ?? 4;
     final currentCount = user?.petIds.length ?? 0;
     return (currentCount < maxPets, currentCount, maxPets);
@@ -138,16 +131,16 @@ class PetCreateNotifier extends StateNotifier<PetCreateState> {
 /// 宠物创建 Provider
 final petCreateProvider =
     StateNotifierProvider<PetCreateNotifier, PetCreateState>((ref) {
-  final firestoreService = ref.watch(firestoreServiceProvider);
-  return PetCreateNotifier(firestoreService, ref);
+  final cloudbaseService = ref.watch(cloudbaseServiceProvider);
+  return PetCreateNotifier(cloudbaseService, ref);
 });
 
 /// 宠物互动 Notifier
 class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
-  final FirestoreService _firestoreService;
+  final CloudbaseService _cloudbaseService;
   final Ref _ref;
 
-  PetInteractionNotifier(this._firestoreService, this._ref)
+  PetInteractionNotifier(this._cloudbaseService, this._ref)
       : super(const AsyncValue.data(null));
 
   /// 放生/删除宠物（永久删除）
@@ -165,7 +158,7 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
     state = const AsyncValue.loading();
     try {
       // 1. 获取宠物信息（用于删除照片）
-      final pet = await _firestoreService.getPet(petId);
+      final pet = await _cloudbaseService.getPet(petId);
 
       // 2. 删除 Storage 中的照片（如果有且提供了 storageService）
       if (storageService != null && pet?.originalPhotoUrl != null && pet!.originalPhotoUrl!.isNotEmpty) {
@@ -178,10 +171,10 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
       }
 
       // 3. 从用户列表移除
-      await _firestoreService.removePetFromUser(userId, petId);
+      await _cloudbaseService.removePetFromUser(userId, petId);
 
       // 4. 删除宠物文档
-      await _firestoreService.deletePet(petId);
+      await _cloudbaseService.deletePet(petId);
 
       state = const AsyncValue.data(null);
       return true;
@@ -192,15 +185,15 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
     }
   }
 
-  /// 同步衰减状态到 Firestore
+  /// 同步衰减状态到 CloudBase
   /// 在互动前调用，确保衰减后的状态被持久化
   Future<PetStatus> _syncDecayedStatus(PetModel pet) async {
     // 计算衰减后的状态
     final decayedStatus = StatusDecayCalculator.calculateDecay(pet);
 
-    // 如果状态有变化，同步到 Firestore
+    // 如果状态有变化，同步到 CloudBase
     if (decayedStatus != pet.status) {
-      await _firestoreService.updatePetStatus(
+      await _cloudbaseService.updatePetStatus(
         pet.id,
         happiness: decayedStatus.happiness,
         hunger: decayedStatus.hunger,
@@ -218,7 +211,7 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
     state = const AsyncValue.loading();
     try {
       // 获取当前宠物状态
-      final pet = await _firestoreService.getPet(petId);
+      final pet = await _cloudbaseService.getPet(petId);
       if (pet == null) throw Exception('宠物不存在');
 
       // 先同步衰减状态
@@ -229,14 +222,14 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
       final newHappiness = (decayedStatus.happiness + 5).clamp(0, 100);
 
       // 更新状态
-      await _firestoreService.updatePetStatus(
+      await _cloudbaseService.updatePetStatus(
         petId,
         hunger: newHunger,
         happiness: newHappiness,
       );
 
       // 更新成长数据
-      await _firestoreService.updatePetStats(
+      await _cloudbaseService.updatePetStats(
         petId,
         experienceGain: 10,
         intimacyGain: 5,
@@ -244,11 +237,10 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
       );
 
       // 更新用户统计并检查成就
-      final authState = _ref.read(authStateProvider);
-      final userId = authState.valueOrNull?.uid;
+      final userId = _ref.read(currentUserIdProvider);
       if (userId != null) {
-        await _firestoreService.incrementUserStat(userId, 'feedCount');
-        final stats = await _firestoreService.getUserStats(userId);
+        await _cloudbaseService.incrementUserStat(userId, 'feedCount');
+        final stats = await _cloudbaseService.getUserStats(userId);
         if (stats != null) {
           await _ref.read(achievementNotifierProvider.notifier).checkAndUpdateProgress(
             userId: userId,
@@ -270,7 +262,7 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
   Future<bool> pet(String petId) async {
     state = const AsyncValue.loading();
     try {
-      final pet = await _firestoreService.getPet(petId);
+      final pet = await _cloudbaseService.getPet(petId);
       if (pet == null) throw Exception('宠物不存在');
 
       // 先同步衰减状态
@@ -278,12 +270,12 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
 
       final newHappiness = (decayedStatus.happiness + 15).clamp(0, 100);
 
-      await _firestoreService.updatePetStatus(
+      await _cloudbaseService.updatePetStatus(
         petId,
         happiness: newHappiness,
       );
 
-      await _firestoreService.updatePetStats(
+      await _cloudbaseService.updatePetStats(
         petId,
         experienceGain: 5,
         intimacyGain: 10,
@@ -291,11 +283,10 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
       );
 
       // 更新用户统计并检查成就
-      final authState = _ref.read(authStateProvider);
-      final userId = authState.valueOrNull?.uid;
+      final userId = _ref.read(currentUserIdProvider);
       if (userId != null) {
-        await _firestoreService.incrementUserStat(userId, 'petCount');
-        final stats = await _firestoreService.getUserStats(userId);
+        await _cloudbaseService.incrementUserStat(userId, 'petCount');
+        final stats = await _cloudbaseService.getUserStats(userId);
         if (stats != null) {
           await _ref.read(achievementNotifierProvider.notifier).checkAndUpdateProgress(
             userId: userId,
@@ -317,7 +308,7 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
   Future<bool> rest(String petId) async {
     state = const AsyncValue.loading();
     try {
-      final pet = await _firestoreService.getPet(petId);
+      final pet = await _cloudbaseService.getPet(petId);
       if (pet == null) throw Exception('宠物不存在');
 
       // 先同步衰减状态
@@ -325,12 +316,12 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
 
       final newEnergy = (decayedStatus.energy + 30).clamp(0, 100);
 
-      await _firestoreService.updatePetStatus(
+      await _cloudbaseService.updatePetStatus(
         petId,
         energy: newEnergy,
       );
 
-      await _firestoreService.updatePetStats(
+      await _cloudbaseService.updatePetStats(
         petId,
         incrementInteractions: true,
       );
@@ -347,7 +338,7 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
   Future<bool> clean(String petId, {int cleanlinessGain = 25}) async {
     state = const AsyncValue.loading();
     try {
-      final pet = await _firestoreService.getPet(petId);
+      final pet = await _cloudbaseService.getPet(petId);
       if (pet == null) throw Exception('宠物不存在');
 
       // 先同步衰减状态
@@ -358,7 +349,7 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
       final newHappiness = (decayedStatus.happiness + 10).clamp(0, 100);
       final newHealth = (decayedStatus.health + 5).clamp(0, 100);
 
-      await _firestoreService.updatePetStatus(
+      await _cloudbaseService.updatePetStatus(
         petId,
         cleanliness: newCleanliness,
         happiness: newHappiness,
@@ -366,7 +357,7 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
       );
 
       // 经验+8, 亲密度+8
-      await _firestoreService.updatePetStats(
+      await _cloudbaseService.updatePetStats(
         petId,
         experienceGain: 8,
         intimacyGain: 8,
@@ -374,11 +365,10 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
       );
 
       // 更新用户统计并检查成就
-      final authState = _ref.read(authStateProvider);
-      final userId = authState.valueOrNull?.uid;
+      final userId = _ref.read(currentUserIdProvider);
       if (userId != null) {
-        await _firestoreService.incrementUserStat(userId, 'cleanCount');
-        final stats = await _firestoreService.getUserStats(userId);
+        await _cloudbaseService.incrementUserStat(userId, 'cleanCount');
+        final stats = await _cloudbaseService.getUserStats(userId);
         if (stats != null) {
           await _ref.read(achievementNotifierProvider.notifier).checkAndUpdateProgress(
             userId: userId,
@@ -400,7 +390,7 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
   Future<bool> play(String petId) async {
     state = const AsyncValue.loading();
     try {
-      final pet = await _firestoreService.getPet(petId);
+      final pet = await _cloudbaseService.getPet(petId);
       if (pet == null) throw Exception('宠物不存在');
 
       // 先同步衰减状态
@@ -410,14 +400,14 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
       final newHappiness = (decayedStatus.happiness + 20).clamp(0, 100);
       final newEnergy = (decayedStatus.energy - 10).clamp(0, 100);
 
-      await _firestoreService.updatePetStatus(
+      await _cloudbaseService.updatePetStatus(
         petId,
         happiness: newHappiness,
         energy: newEnergy,
       );
 
       // 经验+10, 亲密度+15
-      await _firestoreService.updatePetStats(
+      await _cloudbaseService.updatePetStats(
         petId,
         experienceGain: 10,
         intimacyGain: 15,
@@ -425,11 +415,10 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
       );
 
       // 更新用户统计并检查成就
-      final authState = _ref.read(authStateProvider);
-      final userId = authState.valueOrNull?.uid;
+      final userId = _ref.read(currentUserIdProvider);
       if (userId != null) {
-        await _firestoreService.incrementUserStat(userId, 'playCount');
-        final stats = await _firestoreService.getUserStats(userId);
+        await _cloudbaseService.incrementUserStat(userId, 'playCount');
+        final stats = await _cloudbaseService.getUserStats(userId);
         if (stats != null) {
           await _ref.read(achievementNotifierProvider.notifier).checkAndUpdateProgress(
             userId: userId,
@@ -452,7 +441,7 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
   /// 在应用启动/恢复时调用，确保离线期间的状态衰减被持久化
   Future<void> syncDecayedStatusIfNeeded(String petId) async {
     try {
-      final pet = await _firestoreService.getPet(petId);
+      final pet = await _cloudbaseService.getPet(petId);
       if (pet == null) return;
       await _syncDecayedStatus(pet);
     } catch (e) {
@@ -481,12 +470,11 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
     state = const AsyncValue.loading();
     try {
       // 获取用户 ID
-      final authState = _ref.read(authStateProvider);
-      final userId = authState.valueOrNull?.uid;
+      final userId = _ref.read(currentUserIdProvider);
       if (userId == null) throw Exception('用户未登录');
 
       // 获取当前宠物信息
-      final pet = await _firestoreService.getPet(petId);
+      final pet = await _cloudbaseService.getPet(petId);
       if (pet == null) throw Exception('宠物不存在');
 
       // 上传新照片
@@ -499,7 +487,7 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
       if (newPhotoUrl == null) throw Exception('照片上传失败');
 
       // 更新宠物文档
-      await _firestoreService.updatePet(petId, {
+      await _cloudbaseService.updatePet(petId, {
         'originalPhotoUrl': newPhotoUrl,
         'updatedAt': DateTime.now().toIso8601String(),
       });
@@ -527,8 +515,8 @@ class PetInteractionNotifier extends StateNotifier<AsyncValue<void>> {
 /// 宠物互动 Provider
 final petInteractionProvider =
     StateNotifierProvider<PetInteractionNotifier, AsyncValue<void>>((ref) {
-  final firestoreService = ref.watch(firestoreServiceProvider);
-  return PetInteractionNotifier(firestoreService, ref);
+  final cloudbaseService = ref.watch(cloudbaseServiceProvider);
+  return PetInteractionNotifier(cloudbaseService, ref);
 });
 
 /// 带状态衰减的选中宠物 Provider

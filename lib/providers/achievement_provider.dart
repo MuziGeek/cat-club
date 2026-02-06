@@ -2,17 +2,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/models/achievement_definitions.dart';
 import '../data/models/achievement_model.dart';
-import '../services/firestore_service.dart';
+import '../services/cloudbase_service.dart';
 import 'auth_provider.dart';
 import 'user_provider.dart';
 
 /// 用户成就进度流 Provider
 final userAchievementsProvider = StreamProvider<List<UserAchievement>>((ref) {
-  final userId = ref.watch(authStateProvider).valueOrNull?.uid;
+  final userId = ref.watch(currentUserIdProvider);
   if (userId == null) return Stream.value([]);
 
-  final firestoreService = ref.watch(firestoreServiceProvider);
-  return firestoreService.userAchievementsStream(userId);
+  final cloudbaseService = ref.watch(cloudbaseServiceProvider);
+  return cloudbaseService.userAchievementsStream(userId);
 });
 
 /// 成就统计信息 Provider
@@ -57,8 +57,8 @@ class AchievementNotifier extends StateNotifier<AsyncValue<void>> {
 
   AchievementNotifier(this._ref) : super(const AsyncValue.data(null));
 
-  FirestoreService get _firestoreService =>
-      _ref.read(firestoreServiceProvider);
+  CloudbaseService get _cloudbaseService =>
+      _ref.read(cloudbaseServiceProvider);
 
   /// 检查并更新成就进度
   ///
@@ -77,7 +77,7 @@ class AchievementNotifier extends StateNotifier<AsyncValue<void>> {
 
       // 获取用户当前成就进度
       final userAchievements =
-          await _firestoreService.getUserAchievements(userId);
+          await _cloudbaseService.getUserAchievements(userId);
       final userAchievementMap = {
         for (final ua in userAchievements) ua.achievementId: ua
       };
@@ -91,7 +91,7 @@ class AchievementNotifier extends StateNotifier<AsyncValue<void>> {
         // 检查是否达成目标
         if (currentValue >= achievement.targetValue) {
           // 解锁成就
-          await _firestoreService.unlockAchievement(
+          await _cloudbaseService.unlockAchievement(
             userId: userId,
             achievementId: achievement.id,
             currentValue: currentValue,
@@ -99,7 +99,7 @@ class AchievementNotifier extends StateNotifier<AsyncValue<void>> {
           unlockedAchievements.add(achievement);
         } else {
           // 更新进度
-          await _firestoreService.updateAchievementProgress(
+          await _cloudbaseService.updateAchievementProgress(
             userId: userId,
             achievementId: achievement.id,
             currentValue: currentValue,
@@ -133,7 +133,7 @@ class AchievementNotifier extends StateNotifier<AsyncValue<void>> {
 
       // 检查是否已解锁且未领取
       final userAchievements =
-          await _firestoreService.getUserAchievements(userId);
+          await _cloudbaseService.getUserAchievements(userId);
       final userAchievement = userAchievements.firstWhere(
         (ua) => ua.achievementId == achievementId,
         orElse: () => UserAchievement(achievementId: achievementId),
@@ -150,7 +150,7 @@ class AchievementNotifier extends StateNotifier<AsyncValue<void>> {
       }
 
       // 发放奖励
-      await _firestoreService.claimAchievementReward(
+      await _cloudbaseService.claimAchievementReward(
         userId: userId,
         achievementId: achievementId,
         reward: achievement.reward,
@@ -176,7 +176,7 @@ class AchievementNotifier extends StateNotifier<AsyncValue<void>> {
 
     try {
       // 获取用户统计数据
-      final stats = await _firestoreService.getUserStats(userId);
+      final stats = await _cloudbaseService.getUserStats(userId);
       if (stats == null) return [];
 
       // 检查各类型成就

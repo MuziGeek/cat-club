@@ -6,7 +6,91 @@
 
 | 时间 | 版本 | 变更内容 |
 |------|------|----------|
+| 2026-02-06 | 1.3.0 | 完成 CloudbaseService 架构重构，添加 SOLID/DRY 强制规范 |
+| 2026-02-06 | 1.2.0 | 统一使用 MySQL 关系型数据库，删除 NoSQL 空集合 |
+| 2026-02-04 | 1.1.0 | 添加腾讯云 CloudBase 迁移文档 |
 | 2026-01-29 09:45:35 | 1.0.0 | 初始化项目文档结构 |
+
+---
+
+## 🚨 强制架构规范 (MANDATORY)
+
+> **⚠️ 所有功能实现必须严格遵守以下原则，违反将导致代码审查不通过**
+
+### SOLID 原则 (强制)
+
+| 原则 | 要求 | 违规示例 |
+|------|------|----------|
+| **S - 单一职责** | 每个类/文件只负责一件事 | ❌ 一个 Service 包含 CRUD + 认证 + 缓存 |
+| **O - 开闭原则** | 对扩展开放，对修改关闭 | ❌ 修改现有类添加新功能而非扩展 |
+| **L - 里氏替换** | 子类可替换父类 | ❌ 子类重写方法改变行为契约 |
+| **I - 接口隔离** | 接口应小而专一 | ❌ 一个接口包含 20+ 方法 |
+| **D - 依赖倒置** | 依赖抽象而非具体实现 | ❌ 直接 `new` 具体类而非注入接口 |
+
+### DRY 原则 (强制)
+
+| 规则 | 要求 |
+|------|------|
+| **禁止重复代码** | 相同逻辑出现 2 次以上必须抽取 |
+| **统一工具类** | 使用 `lib/core/utils/` 下的工具类 |
+| **统一类型转换** | 使用 `TypeConverters` 而非内联解析 |
+| **统一异常处理** | 使用 `CloudbaseException` 体系 |
+
+### 代码分层规范 (强制)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Presentation Layer (lib/presentation/, lib/providers/)     │
+│  • 只处理 UI 和用户交互                                      │
+│  • 禁止直接调用 HTTP/数据库                                  │
+├─────────────────────────────────────────────────────────────┤
+│  Domain Layer (lib/domain/)                                  │
+│  • 定义 Repository 接口                                      │
+│  • 定义业务实体和用例                                        │
+├─────────────────────────────────────────────────────────────┤
+│  Data Layer (lib/data/)                                      │
+│  • 实现 Repository 接口                                      │
+│  • 数据映射 (Mapper)                                         │
+│  • 数据源封装 (DataSource)                                   │
+├─────────────────────────────────────────────────────────────┤
+│  Services Layer (lib/services/)                              │
+│  • Facade 模式统一入口                                       │
+│  • 委托给 Repository 实现                                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 新增功能检查清单
+
+添加新功能前，必须确认：
+
+- [ ] 是否复用了现有的 `TypeConverters`？
+- [ ] 是否使用了 `Result<T>` 模式处理错误？
+- [ ] 是否通过接口注入依赖？
+- [ ] 是否有重复代码可以抽取？
+- [ ] 单个文件是否超过 400 行？（超过需拆分）
+- [ ] 单个方法是否超过 50 行？（超过需拆分）
+
+### 现有架构组件 (必须复用)
+
+| 组件 | 路径 | 用途 |
+|------|------|------|
+| `TypeConverters` | `lib/core/utils/type_converters.dart` | MySQL 类型转换 |
+| `CloudbaseException` | `lib/core/exceptions/cloudbase_exception.dart` | 异常体系 |
+| `Result<T>` | `lib/core/exceptions/cloudbase_exception.dart` | 成功/失败处理 |
+| `CloudbaseRestClient` | `lib/data/datasources/cloudbase_rest_client.dart` | HTTP 请求 |
+| `UserMapper` | `lib/data/mappers/user_mapper.dart` | 用户数据转换 |
+| `PetMapper` | `lib/data/mappers/pet_mapper.dart` | 宠物数据转换 |
+| `AchievementMapper` | `lib/data/mappers/achievement_mapper.dart` | 成就数据转换 |
+
+### 添加新实体的标准流程
+
+```
+1. 创建 Mapper: lib/data/mappers/{entity}_mapper.dart
+2. 定义接口: lib/domain/repositories/{entity}_repository.dart
+3. 实现接口: lib/data/repositories/{entity}_repository_impl.dart
+4. 注册 Provider: lib/services/cloudbase_service.dart
+5. (可选) 扩展 Facade 方法
+```
 
 ---
 
@@ -240,3 +324,211 @@ chore: 构建/工具变更
 | UI 设计规范 | `docs/06-ui-design-spec.md` | 设计规范 |
 | 开发计划 | `docs/07-development-plan.md` | 开发排期 |
 | 环境配置 | `docs/08-environment-setup.md` | 环境搭建指南 |
+
+---
+
+## 🔄 腾讯云 CloudBase 迁移计划
+
+> **当前状态**: 正在从 Google Firebase 迁移到腾讯云 CloudBase
+
+### 迁移背景
+
+由于国内网络环境和合规要求，项目正在从 Firebase 迁移到腾讯云 CloudBase (TCB)。
+
+### CloudBase 环境信息
+
+```dart
+// lib/config/cloudbase_config.dart
+envId: 'cat-hub-6gcp6yje9dd382c7'
+region: 'ap-shanghai'
+apiBaseUrl: 'https://cat-hub-6gcp6yje9dd382c7.api.tcloudbasegateway.com'
+```
+
+### 迁移对照表
+
+| 功能模块 | Firebase (原) | CloudBase (新) | 迁移状态 |
+|----------|---------------|----------------|----------|
+| **认证服务** | Firebase Auth | CloudBase HTTP API Auth | ✅ 已完成 |
+| **数据库** | Firestore | CloudBase MySQL (关系型) | ✅ 已完成 |
+| **存储服务** | Firebase Storage | 腾讯云 COS | ✅ 已完成 |
+| **云函数** | Cloud Functions | CloudBase 云函数 | 📋 待迁移 |
+| **推送通知** | FCM | 待定 | 📋 待迁移 |
+
+### 已完成的 CloudBase 服务实现
+
+#### 1. 认证服务 (HTTP API 方式)
+
+**文件**: `lib/services/cloudbase_auth_http_service.dart`
+
+**支持的认证方式**:
+- ✅ 用户名/邮箱/手机号 + 密码登录
+- ✅ 邮箱 OTP 验证码登录
+- ✅ 手机短信验证码登录 (推荐)
+- ✅ 匿名登录
+- ✅ OAuth 第三方登录 (Google 等)
+- ✅ 自定义 Ticket 登录
+- ✅ Token 刷新
+- ✅ 密码重置/修改
+
+**使用示例**:
+```dart
+final authService = ref.watch(cloudbaseAuthHttpServiceProvider);
+
+// 手机验证码登录（推荐）
+final result = await authService.sendPhoneOtp('13800138000');
+final token = await authService.verifyOtp(
+  verificationId: result.verificationId,
+  code: '123456',
+);
+final state = await authService.signInWithVerificationToken(token);
+
+// 密码登录
+final state = await authService.signInWithPassword(
+  email: 'user@example.com',
+  password: 'password',
+);
+```
+
+#### 2. 数据库服务 (MySQL REST API)
+
+**文件**: `lib/services/cloudbase_service.dart`
+
+**API 端点**: `/v1/rdb/rest/{table}`
+
+**支持的操作**:
+- ✅ 用户 CRUD
+- ✅ 宠物 CRUD
+- ✅ 背包道具管理
+- ✅ 成就进度
+- ✅ 用户统计
+
+**MySQL 表结构**:
+
+| 表名 | 主要字段 | 用途 |
+|------|----------|------|
+| `users` | id, _openid, email, phone, displayName, coins, diamonds, inventory(JSON) | 用户信息 |
+| `pets` | id, _openid, userId, name, species, status(JSON), stats(JSON) | 宠物信息 |
+| `user_achievements` | id, _openid, userId, achievementId, currentValue, isUnlocked | 成就进度 |
+| `user_stats` | id, _openid, userId, feedCount, petCount, cleanCount, playCount | 用户统计 |
+
+**REST API 操作**:
+
+| 操作 | 方法 | 端点示例 |
+|------|------|----------|
+| 查询 | GET | `/v1/rdb/rest/users?id=eq.{id}` |
+| 创建 | POST | `/v1/rdb/rest/users` |
+| 更新 | PATCH | `/v1/rdb/rest/users?id=eq.{id}` |
+| 删除 | DELETE | `/v1/rdb/rest/users?id=eq.{id}` |
+
+**`_openid` 列说明**:
+- 每个表都有 `_openid` 列用于权限控制
+- 系统自动填充当前登录用户的 openid
+- 查询时自动过滤，只返回当前用户的数据
+
+#### 3. 存储服务 (腾讯云 COS)
+
+**文件**: `lib/services/storage_service.dart`
+
+**功能**:
+- ✅ 图片选择 (相机/相册)
+- ✅ 图片裁剪
+- ✅ 图片上传到 COS
+- ✅ 图片删除
+
+### 待迁移的 Firebase 服务
+
+以下文件仍在使用 Firebase，需要迁移：
+
+| 文件路径 | 使用的 Firebase 服务 | 迁移优先级 |
+|----------|---------------------|------------|
+| `lib/services/auth_service.dart` | Firebase Auth | 中 (可切换使用 CloudBase) |
+| `lib/services/firestore_service.dart` | Firestore | 中 (可切换使用 CloudBase) |
+| `lib/services/check_in_service.dart` | Firestore | 中 |
+| `lib/services/ai_generation_service.dart` | Firebase Storage | 低 |
+| `lib/providers/auth_provider.dart` | Firebase Auth | 中 |
+| `lib/main.dart` | Firebase 初始化 | 高 |
+
+---
+
+## CloudBase 开发指南
+
+### 关键 Skill 参考
+
+开发 CloudBase 功能时，请参考以下 Skills：
+
+| Skill 名称 | 用途 | 使用场景 |
+|------------|------|----------|
+| `cloudbase-guidelines` | CloudBase 开发总纲 | 开始任何 CloudBase 开发前必读 |
+| `http-api-cloudbase` | HTTP API 调用 | Flutter/原生应用（无 SDK 支持） |
+| `auth-tool-cloudbase` | 认证配置 | 配置登录方式 |
+| `relational-database-tool` | MySQL 数据库 | 如需使用关系型数据库 |
+| `cloud-functions` | 云函数开发 | 服务端逻辑 |
+| `cloudrun-development` | CloudRun 部署 | 容器化后端服务 |
+
+### ⚠️ 重要：Flutter/原生应用限制
+
+**CloudBase SDK 不支持 Flutter/原生应用！** 必须使用 HTTP API 方式：
+
+```dart
+// ❌ 错误：SDK 方式（仅 Web/小程序可用）
+import 'package:cloudbase_ce/cloudbase_ce.dart';
+
+// ✅ 正确：HTTP API 方式（Flutter/原生应用）
+import 'package:http/http.dart' as http;
+final response = await http.post(
+  Uri.parse('$apiBaseUrl/auth/v1/signin'),
+  headers: {'Authorization': 'Bearer $publishableKey'},
+  body: jsonEncode({'email': email, 'password': password}),
+);
+```
+
+### CloudBase MCP 工具
+
+项目已配置 CloudBase MCP，可通过以下方式使用：
+
+```bash
+# 查询环境信息
+mcporter call cloudbase.envQuery
+
+# MySQL 数据库查询
+mcporter call cloudbase.executeReadOnlySQL sql="SELECT * FROM users"
+
+# 云函数管理
+mcporter call cloudbase.getFunctionList
+```
+
+> ⚠️ **注意**: NoSQL 文档数据库集合已废弃并删除，请使用 MySQL 关系型数据库。
+
+### 认证 API 端点参考
+
+| 功能 | 方法 | 端点 |
+|------|------|------|
+| 发送验证码 | POST | `/auth/v1/verification` |
+| 验证验证码 | POST | `/auth/v1/verification/verify` |
+| 密码登录 | POST | `/auth/v1/signin` |
+| 匿名登录 | POST | `/auth/v1/signin/anonymously` |
+| 获取用户信息 | GET | `/auth/v1/user` |
+| 更新用户信息 | PATCH | `/auth/v1/user` |
+| 登出 | POST | `/auth/v1/signout` |
+| 刷新 Token | POST | `/auth/v1/token/refresh` |
+
+### 手机号格式要求
+
+⚠️ 手机号必须包含国家码和空格：`"+86 13800138000"`
+
+```dart
+// ✅ 正确格式
+final formattedPhone = '+86 $phone';
+
+// ❌ 错误格式
+final phone = '13800138000';
+final phone = '+8613800138000'; // 缺少空格
+```
+
+### 控制台入口
+
+- **环境概览**: https://tcb.cloud.tencent.com/dev?envId=cat-hub-6gcp6yje9dd382c7#/overview
+- **文档数据库**: https://tcb.cloud.tencent.com/dev?envId=cat-hub-6gcp6yje9dd382c7#/db/doc
+- **身份认证**: https://tcb.cloud.tencent.com/dev?envId=cat-hub-6gcp6yje9dd382c7#/identity
+- **云函数**: https://tcb.cloud.tencent.com/dev?envId=cat-hub-6gcp6yje9dd382c7#/scf
+- **云存储**: https://tcb.cloud.tencent.com/dev?envId=cat-hub-6gcp6yje9dd382c7#/storage

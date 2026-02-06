@@ -3,28 +3,27 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/models/item_definitions.dart';
 import '../data/models/item_model.dart';
-import '../services/firestore_service.dart';
+import '../services/cloudbase_service.dart';
 import 'auth_provider.dart';
 import 'user_provider.dart';
 
 /// 背包状态管理 Provider
 ///
 /// 管理用户拥有的道具及其数量
-/// 数据从 Firestore 加载，使用 ItemDefinitions 转换
+/// 数据从 CloudBase 加载，使用 ItemDefinitions 转换
 
-/// 背包道具 Provider（从 Firestore 加载）
+/// 背包道具 Provider（从 CloudBase 加载）
 /// 返回 Map<ItemModel, int>，表示道具及其数量
 final inventoryProvider = FutureProvider<Map<ItemModel, int>>((ref) async {
-  final authState = ref.watch(authStateProvider);
-  final userId = authState.valueOrNull?.uid;
+  final userId = ref.watch(currentUserIdProvider);
   if (userId == null) return {};
 
-  final firestoreService = ref.watch(firestoreServiceProvider);
-  final rawInventory = await firestoreService.getUserInventory(userId);
+  final cloudbaseService = ref.watch(cloudbaseServiceProvider);
+  final rawInventory = await cloudbaseService.getUserInventory(userId);
 
   // 如果背包为空，初始化默认背包
   if (rawInventory.isEmpty) {
-    await firestoreService.setInitialInventory(
+    await cloudbaseService.setInitialInventory(
       userId,
       ItemDefinitions.initialInventory,
     );
@@ -48,25 +47,24 @@ Map<ItemModel, int> _convertToItemModelMap(Map<String, int> rawInventory) {
 
 /// 背包操作 Notifier
 class InventoryNotifier extends StateNotifier<Map<ItemModel, int>> {
-  final FirestoreService _firestoreService;
+  final CloudbaseService _cloudbaseService;
   final Ref _ref;
 
-  InventoryNotifier(this._firestoreService, this._ref) : super({}) {
+  InventoryNotifier(this._cloudbaseService, this._ref) : super({}) {
     _loadInventory();
   }
 
   /// 加载背包数据
   Future<void> _loadInventory() async {
     try {
-      final authState = _ref.read(authStateProvider);
-      final userId = authState.valueOrNull?.uid;
+      final userId = _ref.read(currentUserIdProvider);
       if (userId == null) return;
 
-      final rawInventory = await _firestoreService.getUserInventory(userId);
+      final rawInventory = await _cloudbaseService.getUserInventory(userId);
 
       // 如果背包为空，初始化默认背包
       if (rawInventory.isEmpty) {
-        await _firestoreService.setInitialInventory(
+        await _cloudbaseService.setInitialInventory(
           userId,
           ItemDefinitions.initialInventory,
         );
@@ -106,16 +104,15 @@ class InventoryNotifier extends StateNotifier<Map<ItemModel, int>> {
     return true;
   }
 
-  /// 同步使用道具到 Firestore
+  /// 同步使用道具到 CloudBase
   Future<void> _syncUseItem(ItemModel item) async {
     try {
-      final authState = _ref.read(authStateProvider);
-      final userId = authState.valueOrNull?.uid;
+      final userId = _ref.read(currentUserIdProvider);
       if (userId == null) return;
 
-      final success = await _firestoreService.useInventoryItem(userId, item.id);
+      final success = await _cloudbaseService.useInventoryItem(userId, item.id);
       if (!success) {
-        // 如果 Firestore 操作失败，重新加载背包
+        // 如果 CloudBase 操作失败，重新加载背包
         await _loadInventory();
       }
     } catch (e) {
@@ -136,14 +133,13 @@ class InventoryNotifier extends StateNotifier<Map<ItemModel, int>> {
     _syncAddItem(item, quantity);
   }
 
-  /// 同步添加道具到 Firestore
+  /// 同步添加道具到 CloudBase
   Future<void> _syncAddItem(ItemModel item, int quantity) async {
     try {
-      final authState = _ref.read(authStateProvider);
-      final userId = authState.valueOrNull?.uid;
+      final userId = _ref.read(currentUserIdProvider);
       if (userId == null) return;
 
-      await _firestoreService.addInventoryItem(userId, item.id, quantity);
+      await _cloudbaseService.addInventoryItem(userId, item.id, quantity);
     } catch (e) {
       debugPrint('同步添加道具失败: $e');
       await _loadInventory();
@@ -159,6 +155,6 @@ class InventoryNotifier extends StateNotifier<Map<ItemModel, int>> {
 /// 背包操作 Provider
 final inventoryNotifierProvider =
     StateNotifierProvider<InventoryNotifier, Map<ItemModel, int>>((ref) {
-  final firestoreService = ref.watch(firestoreServiceProvider);
-  return InventoryNotifier(firestoreService, ref);
+  final cloudbaseService = ref.watch(cloudbaseServiceProvider);
+  return InventoryNotifier(cloudbaseService, ref);
 });
