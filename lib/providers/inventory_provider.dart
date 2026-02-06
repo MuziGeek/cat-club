@@ -98,7 +98,7 @@ class InventoryNotifier extends StateNotifier<Map<ItemModel, int>> {
     }
     state = newState;
 
-    // 异步同步到 Firestore
+    // 异步同步到 CloudBase
     _syncUseItem(item);
 
     return true;
@@ -129,7 +129,7 @@ class InventoryNotifier extends StateNotifier<Map<ItemModel, int>> {
     newState[item] = (newState[item] ?? 0) + quantity;
     state = newState;
 
-    // 异步同步到 Firestore
+    // 异步同步到 CloudBase
     _syncAddItem(item, quantity);
   }
 

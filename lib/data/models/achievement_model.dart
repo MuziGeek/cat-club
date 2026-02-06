@@ -81,7 +81,7 @@ class AchievementModel with _$AchievementModel {
       _$AchievementModelFromJson(json);
 }
 
-/// 用户成就进度模型（存储在 Firestore）
+/// 用户成就进度模型（存储在 CloudBase MySQL）
 @freezed
 class UserAchievement with _$UserAchievement {
   const factory UserAchievement({

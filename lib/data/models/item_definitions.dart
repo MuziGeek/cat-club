@@ -3,7 +3,7 @@ import 'item_model.dart';
 /// 道具定义 - 静态配置
 ///
 /// 所有道具的静态定义，用于：
-/// 1. Firestore 中仅存储 itemId -> quantity
+/// 1. CloudBase MySQL 中仅存储 itemId -> quantity
 /// 2. 客户端根据 itemId 查找完整道具信息
 class ItemDefinitions {
   ItemDefinitions._();
